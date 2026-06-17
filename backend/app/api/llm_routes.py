@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 from app.db.session import get_db
 from app.api.deps import require_guardian_role
 from app.services.llm_orchestrator import LLMOrchestrator
+from app.services.permission_service import PermissionService
 
 router = APIRouter(prefix="/llm", tags=["LLM"])
 
@@ -28,6 +29,14 @@ async def parent_ask(
     current_user: dict = Depends(require_guardian_role),
     db: AsyncSession = Depends(get_db),
 ):
+    # 权限校验：guardian 必须在孩子家庭组内
+    perm = PermissionService(db)
+    if not await perm.user_in_child_group(current_user["user_id"], req.child_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="无权访问该孩子档案",
+        )
+
     orchestrator = LLMOrchestrator(db)
     return await orchestrator.parent_ask(
         user_id=current_user["user_id"],
@@ -42,6 +51,14 @@ async def teacher_ask(
     current_user: dict = Depends(require_guardian_role),
     db: AsyncSession = Depends(get_db),
 ):
+    # 权限校验：guardian 必须在孩子家庭组内
+    perm = PermissionService(db)
+    if not await perm.user_in_child_group(current_user["user_id"], req.child_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="无权访问该孩子档案",
+        )
+
     orchestrator = LLMOrchestrator(db)
     return await orchestrator.teacher_ask(
         user_id=current_user["user_id"],

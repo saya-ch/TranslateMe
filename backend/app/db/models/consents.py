@@ -10,7 +10,7 @@ class Consent(Base, UUIDPK, CreatedAtMixin):
     __tablename__ = "consents"
 
     child_id: Mapped[str] = mapped_column(CHAR(36), ForeignKey("child_profiles.id"), nullable=False, index=True)
-    actor_id: Mapped[str] = mapped_column(CHAR(36), ForeignKey("users.id"), nullable=False)
+    actor_user_id: Mapped[str] = mapped_column(CHAR(36), ForeignKey("users.id"), nullable=False)
     scope: Mapped[str] = mapped_column(String(128), nullable=False)
     purpose: Mapped[str] = mapped_column(String(64), nullable=False)
     source: Mapped[str] = mapped_column(String(32), nullable=False)

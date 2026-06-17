@@ -9,7 +9,7 @@ from datetime import datetime
 class Message(Base, UUIDPK, CreatedAtMixin):
     __tablename__ = "messages"
 
-    conversation_id: Mapped[str] = mapped_column(CHAR(36), ForeignKey("conversations.id"), nullable=False, index=True)
+    conversation_id: Mapped[Optional[str]] = mapped_column(CHAR(36), ForeignKey("conversations.id"), nullable=True, index=True)
     sender_user_id: Mapped[str] = mapped_column(CHAR(36), ForeignKey("users.id"), nullable=False)
     child_id: Mapped[str] = mapped_column(CHAR(36), ForeignKey("child_profiles.id"), nullable=False, index=True)
     sender_role: Mapped[str] = mapped_column(String(32), nullable=False)

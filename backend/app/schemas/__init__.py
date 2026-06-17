@@ -76,6 +76,8 @@ class DraftConfirmRequest(BaseModel):
     model_config = config
     to_role: str
     level: int
+    title: Optional[str] = Field(default=None, max_length=128)
+    body: Optional[str] = Field(default=None, max_length=5000)
 
 
 class DraftConfirmResponse(BaseModel):

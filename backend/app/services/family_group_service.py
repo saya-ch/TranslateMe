@@ -181,6 +181,21 @@ class FamilyGroupService:
         if not consent:
             raise ValueError("授权不存在")
 
+        # 权限校验：只有该孩子本人或同家庭组成员能撤销授权
+        from app.services.permission_service import PermissionService
+
+        perm = PermissionService(self.db)
+        # 需要 user_role，但 service 层只有 user_id；这里用 actor_user_id 校验
+        # 先查 user 的 role
+        from app.db.models.users import User
+
+        user_stmt = select(User).where(User.id == actor_user_id)
+        user = (await self.db.execute(user_stmt)).scalar_one_or_none()
+        if not user:
+            raise PermissionError("用户不存在")
+        if not await perm.user_can_access_child(actor_user_id, user.role, consent.child_id):
+            raise PermissionError("无权撤销该授权")
+
         consent.status = "revoked"
 
         audit = AuditLog(

@@ -12,6 +12,7 @@ from app.schemas import (
     MemoryApproveResponse,
 )
 from app.services.memory_service import MemoryService
+from app.services.permission_service import PermissionService
 
 router = APIRouter(prefix="/memory", tags=["记忆"])
 
@@ -22,6 +23,13 @@ async def list_memory(
     current_user: dict = Depends(require_child_role),
     db: AsyncSession = Depends(get_db),
 ):
+    # 权限校验：child 只能查看自己的记忆
+    perm = PermissionService(db)
+    if not await perm.child_owns_profile(current_user["user_id"], child_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="无权访问该孩子档案",
+        )
     service = MemoryService(db)
     items = await service.list_memory(child_id)
     return {"items": items}
@@ -34,6 +42,13 @@ async def delete_memory(
     current_user: dict = Depends(require_child_role),
     db: AsyncSession = Depends(get_db),
 ):
+    # 权限校验
+    perm = PermissionService(db)
+    if not await perm.child_owns_profile(current_user["user_id"], child_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="无权访问该孩子档案",
+        )
     service = MemoryService(db)
     try:
         return await service.delete_memory(
@@ -53,6 +68,13 @@ async def approve_level(
     current_user: dict = Depends(require_child_role),
     db: AsyncSession = Depends(get_db),
 ):
+    # 权限校验
+    perm = PermissionService(db)
+    if not await perm.child_owns_profile(current_user["user_id"], child_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="无权访问该孩子档案",
+        )
     service = MemoryService(db)
     try:
         return await service.approve_memory_level(

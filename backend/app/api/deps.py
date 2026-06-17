@@ -7,6 +7,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.session import get_db
 from app.core.security import decode_jwt
+from app.services.permission_service import PermissionService
 
 security = HTTPBearer(auto_error=False)
 
@@ -59,3 +60,22 @@ async def require_guardian_role(
             detail="需要家长/老师/心理老师角色",
         )
     return current_user
+
+
+async def verify_child_access(
+    child_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> str:
+    """通用依赖：校验当前用户能否访问指定 child_id。
+    返回 child_id（校验通过）或抛出 403。"""
+    perm = PermissionService(db)
+    ok = await perm.user_can_access_child(
+        current_user["user_id"], current_user["role"], child_id
+    )
+    if not ok:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="无权访问该孩子档案",
+        )
+    return child_id

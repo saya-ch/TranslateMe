@@ -58,6 +58,7 @@ class ConversationService:
                 child_id=child_id,
                 owner_user_id=user_id,
                 title="家庭对话",
+                type="child_to_ai",
             )
             self.db.add(conversation)
             await self.db.flush()
@@ -98,13 +99,21 @@ class ConversationService:
         # 5. 记忆提取（最近 7 天摘要）
         memory_prompt = await self._build_memory_context(child_id)
 
-        # 6. LLM 生成草稿（降敏摘要）
+        # 6. LLM 生成草稿
+        # 注意：若配置了外部 LLM，这里会发送孩子原文的安全检测后最小必要片段给 LLM。
+        # 这是经过安全确认后的原文片段（非脱敏摘要），用于让 LLM 生成更贴切的降敏摘要草稿。
+        # 若未配置 LLM，则使用本地模板 fallback，不会发送任何原文到外部。
         draft_dict: Optional[Dict[str, Any]] = None
         source = "fallback"
 
         if not safety_event_id:  # 高风险不自动生成草稿
             if llm_client.is_configured():
-                user_prompt = f"用户消息（脱敏摘要，不包含具体细节）：{text[:500]}\n请生成降敏摘要，不要包含任何具体细节。"
+                # 发送给 LLM 的是经过安全确认后的最小必要原文片段（前 500 字）
+                user_prompt = (
+                    f"以下是孩子经过安全确认后愿意表达的内容片段（最小必要原文，"
+                    f"用于生成降敏摘要草稿，不要在输出中复述原文）：\n{text[:500]}\n\n"
+                    f"请生成温和、低压力的降敏摘要草稿。"
+                )
                 draft_dict = await llm_client.generate_json(
                     DRAFT_SYSTEM_PROMPT, user_prompt
                 )
@@ -189,7 +198,11 @@ class ConversationService:
         draft_id: str,
         to_role: str,
         level: int,
+        final_title: Optional[str] = None,
+        final_body: Optional[str] = None,
     ) -> Dict[str, Any]:
+        from app.services.permission_service import PermissionService
+
         draft_stmt = select(Draft).where(Draft.id == draft_id)
         draft = (await self.db.execute(draft_stmt)).scalar_one_or_none()
         if not draft:
@@ -197,8 +210,20 @@ class ConversationService:
         if draft.status != "preview":
             raise ValueError("草稿状态异常")
 
-        title = aes_decrypt(draft.title_enc, settings.ENCRYPTION_AES_KEY)
-        body = aes_decrypt(draft.body_enc, settings.ENCRYPTION_AES_KEY)
+        # 权限校验：孩子只能确认自己的草稿
+        perm = PermissionService(self.db)
+        if not await perm.child_owns_profile(user_id, draft.child_id):
+            raise PermissionError("无权确认该草稿")
+
+        # 决定最终发送版本：优先使用孩子确认时传入的 final_title/final_body，
+        # 否则回退到数据库草稿内容
+        db_title = aes_decrypt(draft.title_enc, settings.ENCRYPTION_AES_KEY)
+        db_body = aes_decrypt(draft.body_enc, settings.ENCRYPTION_AES_KEY)
+        final_title = (final_title or db_title).strip() or db_title
+        final_body = (final_body or db_body).strip() or db_body
+
+        final_title_enc = aes_encrypt(final_title, settings.ENCRYPTION_AES_KEY)
+        final_body_enc = aes_encrypt(final_body, settings.ENCRYPTION_AES_KEY)
 
         # 分享权限
         share = SharePermission(
@@ -214,15 +239,15 @@ class ConversationService:
         self.db.add(share)
         await self.db.flush()
 
-        # 收件箱消息
+        # 收件箱消息（使用孩子确认后的最终版本）
         inbox = InboxMessage(
             id=str(uuid.uuid4()),
             child_id=draft.child_id,
             share_id=share.id,
             from_role="child",
             to_role=to_role,
-            title_enc=draft.title_enc,
-            body_enc=draft.body_enc,
+            title_enc=final_title_enc,
+            body_enc=final_body_enc,
             level=level,
             status="delivered",
             permission_id=share.id,
@@ -230,11 +255,14 @@ class ConversationService:
         self.db.add(inbox)
         await self.db.flush()
 
-        # 更新草稿状态
+        # 更新草稿状态（同步保存孩子确认的最终版本，便于审计追溯）
         draft.status = "confirmed"
         draft.to_role = to_role
         draft.level = level
+        draft.title_enc = final_title_enc
+        draft.body_enc = final_body_enc
 
+        # 审计日志：记录孩子确认了最终发送版本（不记录原始私密输入）
         audit = AuditLog(
             id=str(uuid.uuid4()),
             child_id=draft.child_id,
@@ -243,7 +271,16 @@ class ConversationService:
             entity_type="share_permission",
             entity_id=share.id,
             level=level,
-            changes_json=json.dumps({"to_role": to_role, "level": level}),
+            changes_json=json.dumps(
+                {
+                    "to_role": to_role,
+                    "level": level,
+                    "title_edited": final_title != db_title,
+                    "body_edited": final_body != db_body,
+                    "final_title_length": len(final_title),
+                    "final_body_length": len(final_body),
+                }
+            ),
         )
         self.db.add(audit)
         await self.db.commit()
@@ -252,20 +289,27 @@ class ConversationService:
             "share_id": share.id,
             "inbox_message_id": inbox.id,
             "delivered_to": to_role,
-            "title": title,
-            "body": body,
+            "title": final_title,
+            "body": final_body,
         }
 
     # ========== 撤回分享 ==========
     async def revoke_share(
         self, user_id: str, share_id: str
     ) -> Dict[str, Any]:
+        from app.services.permission_service import PermissionService
+
         share_stmt = select(SharePermission).where(
             and_(SharePermission.id == share_id, SharePermission.status == "active")
         )
         share = (await self.db.execute(share_stmt)).scalar_one_or_none()
         if not share:
             raise ValueError("分享不存在或已撤回")
+
+        # 权限校验：只有发起分享的孩子本人能撤回
+        perm = PermissionService(self.db)
+        if not await perm.child_owns_profile(user_id, share.child_id):
+            raise PermissionError("无权撤回该分享")
 
         share.status = "revoked"
 
@@ -355,10 +399,33 @@ class ConversationService:
     async def inbox_list(
         self, user_id: str, user_role: str, child_id: Optional[str] = None
     ) -> List[Dict[str, Any]]:
-        stmt = select(InboxMessage).where(InboxMessage.to_role == user_role)
+        from app.services.permission_service import PermissionService
+
+        perm = PermissionService(self.db)
+
+        # 确定可查询的 child_id 范围
         if child_id:
-            stmt = stmt.where(InboxMessage.child_id == child_id)
-        stmt = stmt.order_by(InboxMessage.created_at.desc())
+            # 显式传了 child_id：必须校验当前用户能访问该 child_id
+            if not await perm.user_can_access_child(user_id, user_role, child_id):
+                raise PermissionError("无权访问该孩子档案")
+            accessible_ids = [child_id]
+        else:
+            # 没传 child_id：只能查询当前用户可访问的 child_id 列表
+            accessible_ids = await perm.get_accessible_child_ids(user_id, user_role)
+
+        if not accessible_ids:
+            return []
+
+        stmt = (
+            select(InboxMessage)
+            .where(
+                and_(
+                    InboxMessage.to_role == user_role,
+                    InboxMessage.child_id.in_(accessible_ids),
+                )
+            )
+            .order_by(InboxMessage.created_at.desc())
+        )
         items = (await self.db.execute(stmt)).scalars().all()
 
         results = []
