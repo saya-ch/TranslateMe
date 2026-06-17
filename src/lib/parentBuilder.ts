@@ -4,32 +4,37 @@
 
 import type { ParentGuide } from '../types'
 
-// 追问触发词（与"孩子"同时出现即触发防火墙）
+// 追问触发词（与"孩子/儿子/女儿"同时出现即触发防火墙）
 const PROBING_KEYWORDS = [
-  '具体',
-  '到底',
-  '真的',
-  '其实',
+  '原话',
+  '具体内容',
+  '具体细节',
+  '详细内容',
+  '详细细节',
   '说了什么',
+  '跟你说什么',
+  '跟你聊了什么',
   '发生了什么',
-  '原因',
-  '经历',
-  '告诉你',
-  '告诉',
+  '经历了什么',
   '什么事',
-  '怎么了',
   '怎么回事',
-  '真实',
-  '实际',
-  '细节',
-  '内容',
+  '到底怎么了',
+  '真正原因',
+  '真实原因',
+  '告诉我具体',
+  '告诉我内容',
+  '告诉我细节',
+  '告诉我原话',
+  '透露',
 ]
 
+const SUBJECT_KEYWORDS = ['孩子', '儿子', '女儿', '他', '她', 'ta']
+
 // 检测家长是否在追问孩子未授权的具体内容
-// 规则：问题里同时出现"孩子"和任一追问词，即触发
+// 规则：问题里同时出现孩子指代和明确索要原话/细节的词，即触发
 export function isProbingQuestion(question: string): boolean {
-  const text = question.replace(/\s+/g, '')
-  if (!text.includes('孩子')) return false
+  const text = question.replace(/\s+/g, '').toLowerCase()
+  if (!SUBJECT_KEYWORDS.some((kw) => text.includes(kw))) return false
   return PROBING_KEYWORDS.some((kw) => text.includes(kw))
 }
 

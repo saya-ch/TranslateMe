@@ -22,7 +22,7 @@ from app.core.security import aes_encrypt, aes_decrypt
 from app.core.safety_patterns import needs_safety_check, detect_patterns, text_hash
 from app.core.llm_client import llm_client
 from app.core.llm_prompts import DRAFT_SYSTEM_PROMPT
-from app.core.llm_fallback import generate_draft_fallback
+from app.core.llm_fallback import generate_draft_fallback, guard_outgoing_draft
 from app.config import settings
 
 
@@ -117,6 +117,8 @@ class ConversationService:
                 draft_dict = await llm_client.generate_json(
                     DRAFT_SYSTEM_PROMPT, user_prompt
                 )
+                if draft_dict:
+                    draft_dict = guard_outgoing_draft(draft_dict)
 
             if not draft_dict:
                 draft_dict = generate_draft_fallback(text)

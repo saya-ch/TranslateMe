@@ -6,16 +6,37 @@ LLM 失败时的本地模板 fallback
 from typing import Dict, Any
 
 
+DRAFT_DEFAULT_TITLE = "孩子想跟你聊聊"
+DRAFT_DEFAULT_BODY = "孩子想找个时间和你聊聊。ta 还没准备好讲细节，希望你先表达愿意听，不追问原因。"
+DRAFT_DEFAULT_SUGGESTIONS = [
+    "可以加入希望谈话的具体时间",
+    "可以加入自己当下的状态",
+    "可以表达希望对方如何做",
+]
+
+
 def generate_draft_fallback(text: str) -> Dict[str, Any]:
     """降敏摘要草稿的 fallback"""
     return {
-        "title": "孩子想跟你聊聊",
-        "body": "孩子想找个时间和你聊聊。ta 还没准备好讲细节，希望你先表达愿意听，不追问原因。",
-        "suggestions": [
-            "可以加入希望谈话的具体时间",
-            "可以加入自己当下的状态",
-            "可以表达希望对方如何做",
-        ],
+        "title": DRAFT_DEFAULT_TITLE,
+        "body": DRAFT_DEFAULT_BODY,
+        "suggestions": DRAFT_DEFAULT_SUGGESTIONS,
+    }
+
+
+def guard_outgoing_draft(draft: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    对外草稿的最后一道隐私守门。
+
+    LLM 可用于理解孩子的输入，但默认发给家长/老师的草稿不能自动带出
+    学校、睡眠、家人冲突等具体细节。孩子若想分享细节，应在预览卡中主动编辑加入。
+    """
+    suggestions = draft.get("suggestions")
+    safe_suggestions = suggestions if isinstance(suggestions, list) and suggestions else DRAFT_DEFAULT_SUGGESTIONS
+    return {
+        "title": DRAFT_DEFAULT_TITLE,
+        "body": DRAFT_DEFAULT_BODY,
+        "suggestions": safe_suggestions[:3],
     }
 
 
@@ -59,10 +80,29 @@ def generate_teacher_guide_fallback(observation: str) -> Dict[str, Any]:
     }
 
 
+PARENT_SUBJECT_KEYWORDS = ["孩子", "儿子", "女儿", "他", "她", "ta"]
+
 PARENT_FIREWALL_KEYWORDS = [
-    "孩子", "儿子", "女儿", "具体", "到底", "真的", "其实",
-    "说了什么", "发生了什么", "原因", "经历", "告诉你", "告诉",
-    "什么事", "怎么了", "怎么回事", "真实", "实际", "细节", "内容",
+    "原话",
+    "具体内容",
+    "具体细节",
+    "详细内容",
+    "详细细节",
+    "说了什么",
+    "跟你说什么",
+    "跟你聊了什么",
+    "发生了什么",
+    "经历了什么",
+    "什么事",
+    "怎么回事",
+    "到底怎么了",
+    "真正原因",
+    "真实原因",
+    "告诉我具体",
+    "告诉我内容",
+    "告诉我细节",
+    "告诉我原话",
+    "透露",
 ]
 
 
@@ -70,8 +110,8 @@ def is_firewall_probing(question: str) -> bool:
     """检测家长是否在追问孩子未授权的具体内容"""
     if not question:
         return False
-    normalized = question.strip().lower()
-    if "孩子" not in normalized and "儿子" not in normalized and "女儿" not in normalized:
+    normalized = question.replace(" ", "").replace("\t", "").replace("\n", "").strip().lower()
+    if not any(kw in normalized for kw in PARENT_SUBJECT_KEYWORDS):
         return False
     return any(kw in normalized for kw in PARENT_FIREWALL_KEYWORDS)
 
