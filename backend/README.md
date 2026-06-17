@@ -53,11 +53,15 @@ API 文档: http://localhost:8000/docs
 
 ## 演示账号
 
+种子数据（`seed.py`）与前端 `LoginPanel` 完全一致：
+
 | 用户名 | 密码 | 角色 |
 |-------|------|------|
-| kid_demo | child123 | 孩子 |
-| parent_demo | parent123 | 家长 |
-| teacher_demo | teacher123 | 老师 |
+| demo_child | demo123456 | 孩子 |
+| demo_parent | demo123456 | 家长 |
+| demo_teacher | demo123456 | 老师 |
+
+`seed.py` 会自动创建孩子档案和家庭组（孩子 + 家长 + 老师）。
 
 ## 主要 API 端点
 
