@@ -2,9 +2,9 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import String, func
+from sqlalchemy import String, func, DateTime
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
-from sqlalchemy.types import CHAR, DATETIME
+from sqlalchemy.types import CHAR
 
 
 def utcnow() -> datetime:
@@ -17,7 +17,7 @@ class Base(DeclarativeBase):
 
 class CreatedAtMixin:
     created_at: Mapped[datetime] = mapped_column(
-        DATETIME(fsp=6),
+        DateTime,
         default=utcnow,
         nullable=False,
     )
@@ -25,7 +25,7 @@ class CreatedAtMixin:
 
 class UpdatedAtMixin:
     updated_at: Mapped[Optional[datetime]] = mapped_column(
-        DATETIME(fsp=6),
+        DateTime,
         default=utcnow,
         onupdate=utcnow,
         nullable=True,
@@ -43,3 +43,6 @@ class UUIDPK:
 
 class CreatedAtIdPK(CreatedAtMixin, UUIDPK):
     pass
+
+
+__all__ = ["Base", "CreatedAtMixin", "UpdatedAtMixin", "UUIDPK", "CreatedAtIdPK", "utcnow", "datetime"]

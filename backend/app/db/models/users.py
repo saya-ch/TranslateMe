@@ -1,31 +1,15 @@
-import uuid
-from datetime import datetime, timezone
-
-from sqlalchemy import String, CHAR, DATETIME
-from sqlalchemy.dialects.mysql import TINYINT, MEDIUMBLOB, MEDIUMTEXT
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from app.db.base import Base, UUIDPK, CreatedAtMixin
+from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy import String, CHAR, ForeignKey
+from sqlalchemy.orm import DeclarativeBase
 
 
-def utcnow() -> datetime:
-    return datetime.now(timezone.utc)
-
-
-class Base(DeclarativeBase):
-    pass
-
-
-class User(Base):
+class User(Base, UUIDPK):
     __tablename__ = "users"
 
-    id: Mapped[str] = mapped_column(
-        CHAR(36),
-        primary_key=True,
-        default=lambda: str(uuid.uuid4()),
-        unique=True,
-    )
-    username: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    username: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
     display_name: Mapped[str] = mapped_column(String(64), nullable=False)
-    role: Mapped[str] = mapped_column(String(32), nullable=False)
+    role: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
 
 

@@ -1,124 +1,115 @@
-import json
-import uuid
-from dataclasses import dataclass, field
-from typing import Any, Dict, Optional, Set
+"""
+WebSocket 连接管理 - 支持多连接 per 用户，按 child/role 路由
+"""
 
+import uuid
+from typing import Dict, Set, Optional, Any
 from fastapi import WebSocket
 
 
-@dataclass
 class Connection:
-    connection_id: str
-    user_id: Optional[str] = None
-    child_id: Optional[str] = None
-    role: Optional[str] = None
-    ws: Optional[WebSocket] = None
+    __slots__ = ("id", "user_id", "child_id", "role", "ws")
+
+    def __init__(self, id: str, user_id: str, child_id: str, role: str, ws: WebSocket):
+        self.id = id
+        self.user_id = user_id
+        self.child_id = child_id
+        self.role = role
+        self.ws = ws
 
 
-class ConnectionManager:
-    def __init__(self) -> None:
+class WebSocketManager:
+    def __init__(self):
         self._connections: Dict[str, Connection] = {}
-        self._user_connections: Dict[str, Set[str]] = {}
-        self._child_connections: Dict[str, Set[str]] = {}
+        self._by_user: Dict[str, Set[str]] = {}
+        self._by_child: Dict[str, Dict[str, Set[str]]] = {}  # child_id -> {role -> {conn_ids}}
 
-    def gen_connection_id(self) -> str:
-        return str(uuid.uuid4())
+    async def connect(self, ws: WebSocket, user_id: str, child_id: str, role: str) -> str:
+        await ws.accept()
+        conn_id = str(uuid.uuid4())
+        conn = Connection(conn_id, user_id, child_id, role, ws)
+        self._connections[conn_id] = conn
 
-    def connect(
-        self,
-        ws: WebSocket,
-        user_id: Optional[str] = None,
-        child_id: Optional[str] = None,
-        role: Optional[str] = None,
-        connection_id: Optional[str] = None,
-    ) -> Connection:
-        cid = connection_id or self.gen_connection_id()
-        conn = Connection(
-            connection_id=cid,
-            user_id=user_id,
-            child_id=child_id,
-            role=role,
-            ws=ws,
-        )
-        self._connections[cid] = conn
-        if user_id is not None:
-            self._user_connections.setdefault(user_id, set()).add(cid)
-        if child_id is not None:
-            self._child_connections.setdefault(child_id, set()).add(cid)
-        return conn
+        if user_id not in self._by_user:
+            self._by_user[user_id] = set()
+        self._by_user[user_id].add(conn_id)
 
-    def disconnect(self, connection_id: str) -> None:
-        conn = self._connections.pop(connection_id, None)
-        if conn is None:
+        if child_id not in self._by_child:
+            self._by_child[child_id] = {}
+        if role not in self._by_child[child_id]:
+            self._by_child[child_id][role] = set()
+        self._by_child[child_id][role].add(conn_id)
+
+        return conn_id
+
+    def disconnect(self, conn_id: str) -> None:
+        conn = self._connections.pop(conn_id, None)
+        if not conn:
             return
-        if conn.user_id is not None and conn.user_id in self._user_connections:
-            self._user_connections[conn.user_id].discard(connection_id)
-            if not self._user_connections[conn.user_id]:
-                del self._user_connections[conn.user_id]
-        if conn.child_id is not None and conn.child_id in self._child_connections:
-            self._child_connections[conn.child_id].discard(connection_id)
-            if not self._child_connections[conn.child_id]:
-                del self._child_connections[conn.child_id]
 
-    async def _send_text(self, ws: WebSocket, message: str) -> None:
-        try:
-            await ws.send_text(message)
-        except Exception:
-            pass
+        user_set = self._by_user.get(conn.user_id)
+        if user_set:
+            user_set.discard(conn_id)
+            if not user_set:
+                del self._by_user[conn.user_id]
 
-    async def _send_json(self, ws: WebSocket, data: Any) -> None:
-        try:
-            text = data if isinstance(data, str) else json.dumps(data, ensure_ascii=False)
-            await self._send_text(ws, text)
-        except Exception:
-            pass
+        role_map = self._by_child.get(conn.child_id)
+        if role_map:
+            role_set = role_map.get(conn.role)
+            if role_set:
+                role_set.discard(conn_id)
+                if not role_set:
+                    del role_map[conn.role]
+            if not role_map:
+                del self._by_child[conn.child_id]
 
-    async def send_to_user(self, user_id: str, message: Any) -> None:
-        for cid in self._user_connections.get(user_id, set()).copy():
-            conn = self._connections.get(cid)
-            if conn is None or conn.ws is None:
+    async def send_to_user(self, user_id: str, message: dict) -> int:
+        conn_ids = list(self._by_user.get(user_id, set()))
+        sent = 0
+        for conn_id in conn_ids:
+            conn = self._connections.get(conn_id)
+            if conn:
+                try:
+                    await conn.ws.send_json(message)
+                    sent += 1
+                except Exception:
+                    pass
+        return sent
+
+    async def send_to_child_role(self, child_id: str, role: str, message: dict) -> int:
+        role_map = self._by_child.get(child_id, {})
+        conn_ids = list(role_map.get(role, set()))
+        sent = 0
+        for conn_id in conn_ids:
+            conn = self._connections.get(conn_id)
+            if conn:
+                try:
+                    await conn.ws.send_json(message)
+                    sent += 1
+                except Exception:
+                    pass
+        return sent
+
+    async def broadcast_to_child(self, child_id: str, message: dict, allowed_roles=None) -> int:
+        role_map = self._by_child.get(child_id, {})
+        sent = 0
+        for role, conn_ids in role_map.items():
+            if allowed_roles and role not in allowed_roles:
                 continue
-            await self._send_json(conn.ws, message)
+            for conn_id in list(conn_ids):
+                conn = self._connections.get(conn_id)
+                if conn:
+                    try:
+                        await conn.ws.send_json(message)
+                        sent += 1
+                    except Exception:
+                        pass
+        return sent
 
-    async def send_to_connection(self, connection_id: str, message: Any) -> None:
-        conn = self._connections.get(connection_id)
-        if conn is None or conn.ws is None:
-            return
-        await self._send_json(conn.ws, message)
-
-    async def broadcast_to_child_role(self, child_id: str, role: str, message: Any) -> None:
-        for cid in self._child_connections.get(child_id, set()).copy():
-            conn = self._connections.get(cid)
-            if conn is None or conn.ws is None:
-                continue
-            if conn.role != role:
-                continue
-            await self._send_json(conn.ws, message)
-
-    async def broadcast_to_child_except_role(self, child_id: str, role: str, message: Any) -> None:
-        for cid in self._child_connections.get(child_id, set()).copy():
-            conn = self._connections.get(cid)
-            if conn is None or conn.ws is None:
-                continue
-            if conn.role == role:
-                continue
-            await self._send_json(conn.ws, message)
-
-    async def broadcast_to_child(self, child_id: str, message: Any) -> None:
-        for cid in self._child_connections.get(child_id, set()).copy():
-            conn = self._connections.get(cid)
-            if conn is None or conn.ws is None:
-                continue
-            await self._send_json(conn.ws, message)
-
-    def user_connection_count(self, user_id: str) -> int:
-        return len(self._user_connections.get(user_id, set()))
-
-    def child_connection_count(self, child_id: str) -> int:
-        return len(self._child_connections.get(child_id, set()))
-
-    def total_connections(self) -> int:
+    def count_connections(self, user_id: Optional[str] = None) -> int:
+        if user_id:
+            return len(self._by_user.get(user_id, set()))
         return len(self._connections)
 
 
-manager = ConnectionManager()
+ws_manager = WebSocketManager()
