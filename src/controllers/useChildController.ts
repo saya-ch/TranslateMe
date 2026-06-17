@@ -91,23 +91,9 @@ export function useChildController({ authUser, useLocalMode }: ControllerProps) 
         { id: nextId('user'), role: 'user', type: 'text', text: trimmed },
       ])
 
-      // 前端先做一次安全检测（后端也会做）
-      if (needsSafetyCheck(trimmed)) {
-        setRawInput(trimmed)
-        setStage('safety')
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: nextId('ai'),
-            role: 'ai',
-            type: 'safety-card',
-            choice: null,
-          },
-        ])
-        return
-      }
-
-      // 后端模式：调用 /conversations/chat
+      // 后端模式：优先调用 /conversations/chat，让后端保存消息并创建 safety_event_id。
+      // 即使前端本地命中安全词，也必须先调后端，否则安全事件审计链路会断。
+      // 前端本地 needsSafetyCheck 仅作为后端不可用时的 fallback。
       if (canUseBackend) {
         try {
           const result = await sendChildMessage({
@@ -117,7 +103,7 @@ export function useChildController({ authUser, useLocalMode }: ControllerProps) 
           })
           conversationIdRef.current = result.conversation_id
 
-          // 后端返回安全检测命中
+          // 后端返回安全检测命中：保存 event_id，显示安全卡
           if (result.needs_safety_check) {
             safetyEventIdRef.current = result.safety_event_id || null
             setRawInput(trimmed)
@@ -176,11 +162,28 @@ export function useChildController({ authUser, useLocalMode }: ControllerProps) 
         } catch (e) {
           const err = e as ApiError
           console.warn('[child] 后端调用失败，回退本地模式:', err.detail)
+          // 清空可能残留的 event_id（后端未成功，无法 resolve）
+          safetyEventIdRef.current = null
           // 继续走本地流程
         }
       }
 
-      // 本地流程
+      // 本地流程（后端不可用时）：前端本地安全检测作为 fallback
+      if (needsSafetyCheck(trimmed)) {
+        setRawInput(trimmed)
+        setStage('safety')
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: nextId('ai'),
+            role: 'ai',
+            type: 'safety-card',
+            choice: null,
+          },
+        ])
+        return
+      }
+
       setRawInput(trimmed)
       setStage('input-done')
       setMessages((prev) => [

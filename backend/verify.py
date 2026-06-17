@@ -11,6 +11,10 @@
 6. parent 收件箱可见
 7. parent 追问原话被防火墙拒绝
 8. 非家庭组 parent 访问 child_id 被 403
+9. child 发送高风险文本 → 创建 safety_event_id
+10. safe_continue resolve 成功
+11. unsafe_support resolve 不调 LLM，返回资源提示
+12. escalation resolve 不调 LLM，返回资源提示
 """
 
 import sys
@@ -76,6 +80,7 @@ from app.services.conversation_service import ConversationService
 from app.services.family_group_service import FamilyGroupService
 from app.services.llm_orchestrator import LLMOrchestrator
 from app.services.permission_service import PermissionService
+from app.services.safety_service import SafetyService
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 
@@ -254,10 +259,91 @@ async def main():
             print("[OK] outsider parent 访问 inbox 被拒绝（PermissionError）")
         print("[OK] 非家庭组 parent 访问 child_id 被拒绝")
 
+        # ===== 步骤 9：child 发送高风险文本 → 创建 safety_event_id =====
+        print("\n--- 步骤 9：child 发送高风险文本 → 创建 safety_event_id ---")
+        safety_service = SafetyService(db)
+        high_risk_text = "我最近真的撑不下去了，活着没意思"
+        safety_chat = await conv_service.process_child_message(
+            user_id=child_user_id,
+            conversation_id=None,
+            child_id=child_id,
+            text=high_risk_text,
+        )
+        print(f"[OK] 高风险消息已发送: message_id={safety_chat['message_id']}")
+        print(f"     needs_safety_check={safety_chat['needs_safety_check']}")
+        print(f"     safety_event_id={safety_chat['safety_event_id']}")
+        print(f"     draft={safety_chat['draft']}")
+        assert safety_chat["needs_safety_check"] is True, "高风险文本应触发安全检测"
+        assert safety_chat["safety_event_id"], "应返回 safety_event_id"
+        assert safety_chat["draft"] is None, "高风险消息不应自动生成草稿"
+        safe_event_id = safety_chat["safety_event_id"]
+        print("[OK] 后端已创建 safety_event_id，草稿未生成")
+
+        # ===== 步骤 10：safe_continue resolve 成功 =====
+        print("\n--- 步骤 10：safe_continue resolve 成功 ---")
+        safe_resolve = await safety_service.resolve_event(
+            user_id=child_user_id,
+            safety_event_id=safe_event_id,
+            branch="safe_continue",
+        )
+        print(f"[OK] safe_continue resolve: resolved_at={safe_resolve['resolved_at']}")
+        print(f"     llm_called={safe_resolve['llm_called']}")
+        print(f"     message={safe_resolve['message']}")
+        assert safe_resolve["resolved_at"] is not None, "应记录解决时间"
+        assert safe_resolve["llm_called"] is False, "safe_continue 不应调用 LLM"
+        print("[OK] safe_continue resolve 成功，未调用 LLM")
+
+        # ===== 步骤 11：unsafe_support resolve 不调 LLM，返回资源提示 =====
+        print("\n--- 步骤 11：unsafe_support resolve 不调 LLM，返回资源提示 ---")
+        unsafe_chat = await conv_service.process_child_message(
+            user_id=child_user_id,
+            conversation_id=None,
+            child_id=child_id,
+            text="我不想活了，想结束一切",
+        )
+        assert unsafe_chat["safety_event_id"], "第二条高风险应创建新事件"
+        unsafe_resolve = await safety_service.resolve_event(
+            user_id=child_user_id,
+            safety_event_id=unsafe_chat["safety_event_id"],
+            branch="unsafe_support",
+        )
+        print(f"[OK] unsafe_support resolve: resources_shown={unsafe_resolve['resources_shown']}")
+        print(f"     llm_called={unsafe_resolve['llm_called']}")
+        print(f"     message={unsafe_resolve['message'][:60]}...")
+        assert unsafe_resolve["resources_shown"] is True, "应显示资源"
+        assert unsafe_resolve["llm_called"] is False, "unsafe_support 不应调用 LLM"
+        # unsafe_support 的热线在 support_lines 字段，message 为简短提示；
+        # resources_shown=True 即表示已返回资源
+        print("[OK] unsafe_support 未调 LLM，返回资源提示")
+
+        # ===== 步骤 12：escalation resolve 不调 LLM，返回资源提示 =====
+        print("\n--- 步骤 12：escalation resolve 不调 LLM，返回资源提示 ---")
+        esc_chat = await conv_service.process_child_message(
+            user_id=child_user_id,
+            conversation_id=None,
+            child_id=child_id,
+            text="我想自残",
+        )
+        assert esc_chat["safety_event_id"], "第三条高风险应创建新事件"
+        esc_resolve = await safety_service.resolve_event(
+            user_id=child_user_id,
+            safety_event_id=esc_chat["safety_event_id"],
+            branch="escalation",
+        )
+        print(f"[OK] escalation resolve: resources_shown={esc_resolve['resources_shown']}")
+        print(f"     llm_called={esc_resolve['llm_called']}")
+        print(f"     message={esc_resolve['message'][:60]}...")
+        assert esc_resolve["resources_shown"] is True, "应显示资源"
+        assert esc_resolve["llm_called"] is False, "escalation 不应调用 LLM"
+        assert "110" in esc_resolve["message"] or "120" in esc_resolve["message"], (
+            "escalation 应包含 110/120 立即人身危险资源"
+        )
+        print("[OK] escalation 未调 LLM，返回立即人身危险资源")
+
     await engine.dispose()
 
     print("\n" + "=" * 60)
-    print("✅ 全部 8 个验证步骤通过")
+    print("✅ 全部 12 个验证步骤通过")
     print("=" * 60)
 
 
