@@ -121,7 +121,7 @@ async def main():
     print(f"     model    = {llm_client.model}")
     print(f"     timeout  = {llm_client.timeout}s")
     print(f"     max_tokens = {llm_client.max_tokens}")
-    print(f"     api_key  = {'*' * 8}{llm_client.api_key[-4:] if llm_client.api_key else ''}")
+    print("     api_key  = configured (hidden)")
     print(f"     DB_FILE  = {DB_FILE}")
 
     engine = create_async_engine(f"sqlite+aiosqlite:///{DB_FILE}", echo=False)
