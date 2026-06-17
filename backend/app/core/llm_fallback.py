@@ -10,7 +10,7 @@ def generate_draft_fallback(text: str) -> Dict[str, Any]:
     """降敏摘要草稿的 fallback"""
     return {
         "title": "孩子想跟你聊聊",
-        "body": "孩子最近有些事想跟你说，ta 希望你能先听 ta 说完，不急着评价。建议你找一个不被打扰的时间，先用十分钟听 ta 说。",
+        "body": "孩子想找个时间和你聊聊。ta 还没准备好讲细节，希望你先表达愿意听，不追问原因。",
         "suggestions": [
             "可以加入希望谈话的具体时间",
             "可以加入自己当下的状态",

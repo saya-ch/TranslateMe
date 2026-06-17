@@ -1,7 +1,7 @@
 // 孩子端对话控制器
 // 默认走后端 API，失败时回退到本地模拟
 
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type {
   ChatMessage,
   ChildClarify,
@@ -70,7 +70,10 @@ export function useChildController({ authUser, useLocalMode }: ControllerProps) 
 
   // 订阅收件箱变化（用于家长回应到达时刷新）
   const [, forceUpdate] = useState(0)
-  useMemo(() => subscribe(() => forceUpdate((n) => n + 1)), [])
+  useEffect(() => {
+    const unsubscribe = subscribe(() => forceUpdate((n) => n + 1))
+    return unsubscribe
+  }, [])
 
   const updateMessage = useCallback((id: string, patch: Partial<ChatMessage>) => {
     setMessages((prev) =>

@@ -54,7 +54,10 @@ export function useParentController({ authUser, useLocalMode }: ControllerProps)
 
   // 订阅收件箱变化
   const [, forceUpdate] = useState(0)
-  useMemo(() => subscribe(() => forceUpdate((n) => n + 1)), [])
+  useEffect(() => {
+    const unsubscribe = subscribe(() => forceUpdate((n) => n + 1))
+    return unsubscribe
+  }, [])
 
   const updateMessage = useCallback((id: string, patch: Partial<ChatMessage>) => {
     setMessages((prev) =>
