@@ -10,7 +10,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_
 from app.db.models.safety_events import SafetyEvent
 from app.db.models.audit_logs import AuditLog
-from app.db.models.child_profiles import ChildProfile
 from app.core.llm_client import llm_client
 from app.core.llm_prompts import PARENT_GUIDE_SYSTEM_PROMPT
 from app.core.llm_fallback import (
@@ -49,11 +48,12 @@ class SafetyService:
         if not event:
             raise ValueError("安全事件不存在或已处理")
 
-        # 权限校验：只有该孩子的 child_profile 所属用户才能处理安全事件
-        child_stmt = select(ChildProfile).where(ChildProfile.id == event.child_id)
-        child = (await self.db.execute(child_stmt)).scalar_one_or_none()
-        if not child or child.user_id != user_id:
-            raise PermissionError("无权操作此安全事件")
+        # 权限校验：只有该孩子本人能解决自己的安全事件
+        from app.services.permission_service import PermissionService
+
+        perm = PermissionService(self.db)
+        if not await perm.child_owns_profile(user_id, event.child_id):
+            raise PermissionError("无权处理该安全事件")
 
         event.status = branch
         event.resolved_by_user_id = user_id

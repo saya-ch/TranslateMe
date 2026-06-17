@@ -84,7 +84,7 @@ async function request<T>(
       ...options,
       headers,
     })
-  } catch (e) {
+  } catch {
     // 网络错误（后端未启动）
     throw new ApiError(0, '无法连接到后端服务')
   }
@@ -142,14 +142,12 @@ export async function register(params: RegisterParams): Promise<AuthUser> {
     body: JSON.stringify(params),
   })
 
-  setAuth(token.access_token, {
-    id: '',
-    username: params.username,
-    display_name: params.display_name,
-    role: params.role,
-  })
-
-  // 拉取用户信息
+  // 临时存 token，再拉取用户信息
+  try {
+    localStorage.setItem(TOKEN_KEY, token.access_token)
+  } catch {
+    // 忽略
+  }
   return await fetchMe()
 }
 
@@ -159,13 +157,11 @@ export async function login(params: LoginParams): Promise<AuthUser> {
     body: JSON.stringify(params),
   })
 
-  // 临时存 token，再拉取用户信息
   try {
     localStorage.setItem(TOKEN_KEY, token.access_token)
   } catch {
     // 忽略
   }
-
   return await fetchMe()
 }
 
@@ -253,12 +249,14 @@ export async function sendChildMessage(
   })
 }
 
-// ===== 草稿确认 =====
+// ===== 草稿确认（支持孩子确认后的最终 title/body）=====
 
 export interface DraftConfirmParams {
   draft_id: string
   to_role: string
   level: number
+  title?: string
+  body?: string
 }
 
 export interface DraftConfirmResult {
@@ -277,6 +275,8 @@ export async function confirmDraft(
     body: JSON.stringify({
       to_role: params.to_role,
       level: params.level,
+      title: params.title,
+      body: params.body,
     }),
   })
 }
@@ -331,19 +331,18 @@ export interface ParentAskParams {
   question: string
 }
 
-export interface ParentGuideDTO {
-  firewall_note: string
-  icebreaker: string
-  say_three: string[]
-  not_say_three: string[]
-  next_step: string
-  reply_draft: string
-}
-
 export interface ParentAskResult {
   source: string
   is_probing: boolean
-  content: ParentGuideDTO & { _note?: string }
+  content: {
+    firewall_note?: string
+    icebreaker?: string
+    say_three?: string[]
+    not_say_three?: string[]
+    next_step?: string
+    reply_draft?: string
+    _note?: string
+  }
 }
 
 export async function parentAsk(
@@ -362,20 +361,46 @@ export interface TeacherAskParams {
   observation: string
 }
 
-export interface TeacherGuideDTO {
-  summary: string
-  privacy_note: string
-  talk_advice: string[]
-  observe_points: string[]
-  referral_advice: string
+export interface TeacherAskResult {
+  source: string
+  content: {
+    summary?: string
+    privacy_note?: string
+    talk_advice?: string[]
+    observe_points?: string[]
+    referral_advice?: string
+  }
 }
 
 export async function teacherAsk(
   params: TeacherAskParams,
-): Promise<{ source: string; content: TeacherGuideDTO }> {
+): Promise<TeacherAskResult> {
   return await request('/llm/teacher-ask', {
     method: 'POST',
     body: JSON.stringify(params),
+  })
+}
+
+// ===== 安全事件 =====
+
+export interface SafetyResolveParams {
+  event_id: string
+  branch: 'safe_continue' | 'unsafe_support' | 'escalation'
+}
+
+export interface SafetyResolveResult {
+  resolved_at: string | null
+  resources_shown: boolean
+  llm_called: boolean
+  message: string
+}
+
+export async function resolveSafetyEvent(
+  params: SafetyResolveParams,
+): Promise<SafetyResolveResult> {
+  return await request(`/safety/events/${params.event_id}/resolve`, {
+    method: 'POST',
+    body: JSON.stringify({ branch: params.branch }),
   })
 }
 

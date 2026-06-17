@@ -1,5 +1,6 @@
 // 登录/注册面板
 // 支持三种身份注册，并提供演示账号快速登录
+// 演示账号与后端 seed.py 保持一致：demo_child/demo_parent/demo_teacher，密码 demo123456
 
 import { useState } from 'react'
 import type { Identity } from '../types'
@@ -19,7 +20,7 @@ interface LoginPanelProps {
 
 type Mode = 'login' | 'register'
 
-// 演示账号（与后端 seed.py 对应）
+// 演示账号（与后端 seed.py DEMO_USERS 完全一致）
 const DEMO_ACCOUNTS: Record<Identity, { username: string; password: string }> = {
   student: { username: 'demo_child', password: 'demo123456' },
   parent: { username: 'demo_parent', password: 'demo123456' },

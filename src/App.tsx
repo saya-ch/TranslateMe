@@ -26,7 +26,7 @@ export default function App() {
 
   const handleIdentity = (v: Identity) => {
     setIdentity(v)
-    // 已登录用户直接进入对话
+    // 已登录用户且角色匹配，直接进入对话
     if (authUser && authUser.role === identityToRole(v)) {
       setPhase('chat')
     } else {

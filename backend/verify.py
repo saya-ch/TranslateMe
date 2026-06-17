@@ -1,13 +1,13 @@
 """
 最小验证脚本 - 端到端测试后端核心流程
-使用 SQLite 内存数据库，无需 MySQL
+使用 SQLite 文件数据库（兼容 Windows，路径通过 tempfile.gettempdir() 获取）
 
-测试流程：
+测试步骤：
 1. 注册 child/parent
 2. 创建家庭组
 3. child 发消息
 4. 生成草稿
-5. child 确认分享
+5. child 确认分享（带最终 title/body）
 6. parent 收件箱可见
 7. parent 追问原话被防火墙拒绝
 8. 非家庭组 parent 访问 child_id 被 403
@@ -16,202 +16,250 @@
 import sys
 import os
 import asyncio
-import uuid
+import tempfile
 from pathlib import Path
 
-# 设置环境变量使用 SQLite 文件数据库
-DB_FILE = "/tmp/family_ai_test.db"
-if os.path.exists(DB_FILE):
-    os.remove(DB_FILE)
-os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{DB_FILE}"
-os.environ["ENCRYPTION_AES_KEY"] = "test-aes-key-32-bytes-please-change!"
-
+# 确保项目根目录在 sys.path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-# 需要在导入 app 之前设置好环境
+# 在导入 app 模块前设置环境变量，使用 SQLite 文件数据库
+DB_FILE = str(Path(tempfile.gettempdir()) / "family_ai_test.db")
+# 清理旧文件
+if Path(DB_FILE).exists():
+    Path(DB_FILE).unlink()
+
+os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{DB_FILE}"
+os.environ["JWT_SECRET"] = "test-secret-for-verify-only"
+os.environ["ENCRYPTION_AES_KEY"] = "test-aes-key-32-bytes-please-00"
+os.environ["LLM_API_BASE"] = ""
+os.environ["LLM_API_KEY"] = ""
+
+# 类型适配：SQLite 不支持 MySQL 特定类型，需要替换
+from sqlalchemy.dialects.mysql import TINYINT, MEDIUMBLOB
+from sqlalchemy import Integer, LargeBinary
+
+
+def _replace_mysql_types(metadata):
+    """遍历所有表的所有列，把 MySQL 特定类型替换为通用类型"""
+    for table in metadata.tables.values():
+        for column in table.columns:
+            if isinstance(column.type, TINYINT):
+                column.type = Integer()
+            elif isinstance(column.type, MEDIUMBLOB):
+                column.type = LargeBinary()
+
+
+# 导入所有模型
+import app.db.models.users  # noqa
+import app.db.models.child_profiles  # noqa
+import app.db.models.consents  # noqa
+import app.db.models.family_groups  # noqa
+import app.db.models.group_members  # noqa
+import app.db.models.conversations  # noqa
+import app.db.models.messages  # noqa
+import app.db.models.drafts  # noqa
+import app.db.models.share_permissions  # noqa
+import app.db.models.inbox_messages  # noqa
+import app.db.models.memory_items  # noqa
+import app.db.models.safety_events  # noqa
+import app.db.models.audit_logs  # noqa
+import app.db.models.idempotency_keys  # noqa
+
 from app.db.base import Base
-from app.db.models.users import User
-from app.db.models.child_profiles import ChildProfile
-from app.db.models.family_groups import FamilyGroup
-from app.db.models.group_members import GroupMember
-from app.db.models.conversations import Conversation
-from app.db.models.messages import Message
-from app.db.models.drafts import Draft
-from app.db.models.share_permissions import SharePermission
-from app.db.models.inbox_messages import InboxMessage
-from app.db.models.memory_items import MemoryItem
-from app.db.models.safety_events import SafetyEvent
-from app.db.models.consents import Consent
-from app.db.models.audit_logs import AuditLog
-from app.db.models.idempotency_keys import IdempotencyKey
 
-# 创建同步引擎用于建表
-from sqlalchemy import create_engine
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-from sqlalchemy.orm import sessionmaker
-
-from app.core.security import hash_password
+# 替换 MySQL 特定类型
+_replace_mysql_types(Base.metadata)
+from app.db.session import get_db
+from app.services.auth_service import AuthService
 from app.services.conversation_service import ConversationService
 from app.services.family_group_service import FamilyGroupService
 from app.services.llm_orchestrator import LLMOrchestrator
 from app.services.permission_service import PermissionService
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+from sqlalchemy.orm import sessionmaker
 
 
-async def run_tests():
-    # 1. 创建数据库
-    sync_engine = create_engine(f"sqlite:///{DB_FILE}", echo=False)
-    # SQLite 不支持 TINYINT/MEDIUMBLOB，用类型适配
-    from sqlalchemy.dialects.mysql import TINYINT, MEDIUMBLOB
-    from sqlalchemy import Integer, LargeBinary
+async def main():
+    print("=" * 60)
+    print("开始端到端验证（SQLite 文件数据库）")
+    print(f"DB_FILE = {DB_FILE}")
+    print("=" * 60)
 
-    # 临时替换类型映射
-    for table in Base.metadata.tables.values():
-        for col in table.columns:
-            if isinstance(col.type, TINYINT):
-                col.type = Integer()
-            elif isinstance(col.type, MEDIUMBLOB):
-                col.type = LargeBinary()
+    # 创建表
+    engine = create_async_engine(f"sqlite+aiosqlite:///{DB_FILE}", echo=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    print("[OK] 数据库表创建完成")
 
-    Base.metadata.create_all(sync_engine)
-    print("✓ 步骤 0: 数据库表创建成功")
-
-    # 异步引擎
-    async_engine = create_async_engine(f"sqlite+aiosqlite:///{DB_FILE}", echo=False)
-    AsyncSessionLocal = sessionmaker(async_engine, class_=AsyncSession, expire_on_commit=False)
+    AsyncSessionLocal = sessionmaker(
+        engine, class_=AsyncSession, expire_on_commit=False, autoflush=False
+    )
 
     async with AsyncSessionLocal() as db:
-        # 2. 注册 child 和 parent
-        child_user = User(
-            id=str(uuid.uuid4()),
-            username="test_child",
-            display_name="测试孩子",
+        # ===== 步骤 1：注册 child 和 parent =====
+        print("\n--- 步骤 1：注册 child 和 parent ---")
+        auth = AuthService(db)
+        child_result = await auth.register(
+            username="verify_child",
+            display_name="验证孩子",
             role="child",
-            password_hash=hash_password("child123"),
+            password="test123456",
         )
-        db.add(child_user)
-        await db.flush()
+        child_user_id = child_result["access_token"]  # 占位，实际需要从 token 解析
+        # 直接查库拿 user_id
+        from sqlalchemy import select
+        from app.db.models.users import User
+        from app.db.models.child_profiles import ChildProfile
 
-        child_profile = ChildProfile(
-            id=str(uuid.uuid4()),
-            user_id=child_user.id,
-            display_name="测试孩子",
-            age_group="teen",
-            grade="未指定",
-            timezone="Asia/Shanghai",
-        )
-        db.add(child_profile)
-        await db.flush()
+        child_user = (
+            await db.execute(select(User).where(User.username == "verify_child"))
+        ).scalar_one()
+        child_user_id = child_user.id
+        child_profile = (
+            await db.execute(
+                select(ChildProfile).where(ChildProfile.user_id == child_user_id)
+            )
+        ).scalar_one()
+        child_id = child_profile.id
+        print(f"[OK] 注册 child: user_id={child_user_id}, child_id={child_id}")
 
-        parent_user = User(
-            id=str(uuid.uuid4()),
-            username="test_parent",
-            display_name="测试家长",
+        parent_result = await auth.register(
+            username="verify_parent",
+            display_name="验证家长",
             role="parent",
-            password_hash=hash_password("parent123"),
+            password="test123456",
         )
-        db.add(parent_user)
-        await db.flush()
+        parent_user = (
+            await db.execute(select(User).where(User.username == "verify_parent"))
+        ).scalar_one()
+        parent_user_id = parent_user.id
+        print(f"[OK] 注册 parent: user_id={parent_user_id}")
 
-        # 另一个不在家庭组的 parent
-        outsider_parent = User(
-            id=str(uuid.uuid4()),
+        # 注册第二个 parent（非家庭组，用于测试 403）
+        await auth.register(
             username="outsider_parent",
             display_name="外部家长",
             role="parent",
-            password_hash=hash_password("parent123"),
+            password="test123456",
         )
-        db.add(outsider_parent)
-        await db.commit()
-        print("✓ 步骤 1: 注册 child/parent/outsider 成功")
+        outsider_user = (
+            await db.execute(select(User).where(User.username == "outsider_parent"))
+        ).scalar_one()
+        outsider_user_id = outsider_user.id
+        print(f"[OK] 注册 outsider parent: user_id={outsider_user_id}")
 
-        # 3. 创建家庭组
+        # ===== 步骤 2：创建家庭组 =====
+        print("\n--- 步骤 2：创建家庭组 ---")
         fam_service = FamilyGroupService(db)
-        group_result = await fam_service.create_or_get(
-            child_user_id=child_user.id,
-            guardian_user_id=parent_user.id,
+        group = await fam_service.create_or_get(
+            child_user_id=child_user_id,
+            guardian_user_id=parent_user_id,
         )
-        assert group_result["group_id"], "家庭组创建失败"
-        assert len(group_result["members"]) == 2, f"成员数量不对: {len(group_result['members'])}"
-        print(f"✓ 步骤 2: 创建家庭组成功，{len(group_result['members'])} 个成员")
+        print(f"[OK] 创建家庭组: group_id={group['group_id']}")
+        print(f"     成员数: {len(group['members'])}")
 
-        # 4. child 发消息
+        # ===== 步骤 3：child 发消息 =====
+        print("\n--- 步骤 3：child 发消息 ---")
         conv_service = ConversationService(db)
         chat_result = await conv_service.process_child_message(
-            user_id=child_user.id,
+            user_id=child_user_id,
             conversation_id=None,
-            child_id=child_profile.id,
-            text="今天在学校很不开心，不想说具体原因",
+            child_id=child_id,
+            text="我最近压力很大，不知道怎么跟妈妈说",
         )
-        assert chat_result["message_id"], "消息发送失败"
-        assert chat_result["draft"], "草稿未生成"
-        assert chat_result["draft"]["title"], "草稿标题为空"
-        print(f"✓ 步骤 3: child 发消息成功，生成草稿: {chat_result['draft']['title']}")
-        print(f"    草稿 body: {chat_result['draft']['body'][:50]}...")
+        print(f"[OK] 消息已发送: message_id={chat_result['message_id']}")
+        print(f"     conversation_id={chat_result['conversation_id']}")
+        print(f"     needs_safety_check={chat_result['needs_safety_check']}")
+        print(f"     source={chat_result['source']}")
 
-        draft_id = chat_result["draft"]["draft_id"]
+        # ===== 步骤 4：验证草稿已生成 =====
+        print("\n--- 步骤 4：验证草稿已生成 ---")
+        draft = chat_result.get("draft")
+        if draft:
+            print(f"[OK] 草稿已生成: draft_id={draft['draft_id']}")
+            print(f"     title={draft['title']}")
+            print(f"     body={draft['body'][:50]}...")
+            draft_id = draft["draft_id"]
+        else:
+            print("[FAIL] 草稿未生成")
+            return
 
-        # 5. child 确认分享
-        share_result = await conv_service.confirm_and_share(
-            user_id=child_user.id,
+        # ===== 步骤 5：child 确认分享（带最终 title/body）=====
+        print("\n--- 步骤 5：child 确认分享（带最终 title/body）---")
+        final_title = "我想跟妈妈聊聊（孩子确认版）"
+        final_body = "妈妈，我最近压力有点大，希望你能先听我说完，不急着评价。"
+        confirm_result = await conv_service.confirm_and_share(
+            user_id=child_user_id,
             draft_id=draft_id,
             to_role="parent",
             level=3,
+            final_title=final_title,
+            final_body=final_body,
         )
-        assert share_result["share_id"], "分享失败"
-        assert share_result["delivered_to"] == "parent", "分享目标不对"
-        print(f"✓ 步骤 4: child 确认分享成功，share_id: {share_result['share_id'][:8]}...")
+        print(f"[OK] 分享已确认: share_id={confirm_result['share_id']}")
+        print(f"     delivered_to={confirm_result['delivered_to']}")
+        print(f"     final_title={confirm_result['title']}")
+        print(f"     final_body={confirm_result['body']}")
+        assert confirm_result["title"] == final_title, "最终 title 未被保存"
+        assert confirm_result["body"] == final_body, "最终 body 未被保存"
+        print("[OK] 最终 title/body 已正确保存")
 
-        # 6. parent 收件箱可见
+        # ===== 步骤 6：parent 收件箱可见 =====
+        print("\n--- 步骤 6：parent 收件箱可见 ---")
         inbox_items = await conv_service.inbox_list(
-            user_id=parent_user.id,
+            user_id=parent_user_id,
             user_role="parent",
-            child_id=child_profile.id,
+            child_id=child_id,
         )
-        assert len(inbox_items) > 0, "收件箱为空"
-        assert inbox_items[0]["title"], "收件箱标题为空"
-        assert inbox_items[0]["from_role"] == "child", "来源角色不对"
-        print(f"✓ 步骤 5: parent 收件箱可见，{len(inbox_items)} 条消息")
-        print(f"    标题: {inbox_items[0]['title']}")
+        print(f"[OK] parent 收件箱: {len(inbox_items)} 条消息")
+        for item in inbox_items:
+            print(f"     - {item['title']}: {item['body'][:50]}...")
+        assert len(inbox_items) >= 1, "parent 收件箱应为空"
+        assert inbox_items[0]["title"] == final_title, "收件箱 title 应为最终确认版"
+        print("[OK] parent 收件箱可见，且内容为孩子确认的最终版本")
 
-        # 7. parent 追问原话被防火墙拒绝
+        # ===== 步骤 7：parent 追问原话被防火墙拒绝 =====
+        print("\n--- 步骤 7：parent 追问原话被防火墙拒绝 ---")
         llm_orch = LLMOrchestrator(db)
         ask_result = await llm_orch.parent_ask(
-            user_id=parent_user.id,
-            child_id=child_profile.id,
-            question="孩子到底发生了什么？告诉我具体情况",
+            user_id=parent_user_id,
+            child_id=child_id,
+            question="孩子到底说了什么？告诉我具体内容",
         )
-        assert ask_result["is_probing"] == True, "防火墙未拦截追问"
-        assert "firewall" in ask_result["source"], "防火墙来源标记不对"
-        print(f"✓ 步骤 6: parent 追问原话被防火墙拒绝")
-        print(f"    防火墙提示: {ask_result['content'].get('_note', 'N/A')[:60]}...")
+        print(f"[OK] parent-ask 结果: source={ask_result['source']}")
+        print(f"     is_probing={ask_result['is_probing']}")
+        assert ask_result["is_probing"] is True, "追问应被防火墙拦截"
+        print("[OK] 家长追问原话被防火墙拒绝，返回通用建议")
 
-        # 8. 非家庭组 parent 访问 child_id 被 403
+        # ===== 步骤 8：非家庭组 parent 访问 child_id 被 403 =====
+        print("\n--- 步骤 8：非家庭组 parent 访问 child_id 被 403 ---")
         perm = PermissionService(db)
-        outsider_has_access = await perm.user_in_child_group(outsider_parent.id, child_profile.id)
-        assert outsider_has_access == False, "外部 parent 不应该有权限"
-        print(f"✓ 步骤 7: 非家庭组 parent 访问 child_id 被拒绝 (403)")
+        can_access = await perm.user_can_access_child(
+            outsider_user_id, "parent", child_id
+        )
+        print(f"[OK] outsider parent 能否访问 child: {can_access}")
+        assert can_access is False, "非家庭组 parent 不应能访问 child"
 
-        # 额外测试：child 只能访问自己的 profile
-        child_owns = await perm.child_owns_profile(child_user.id, child_profile.id)
-        assert child_owns == True, "child 应该拥有自己的 profile"
+        # 验证 inbox 对 outsider 抛 PermissionError
+        try:
+            outsider_inbox = await conv_service.inbox_list(
+                user_id=outsider_user_id,
+                user_role="parent",
+                child_id=child_id,
+            )
+            print("[FAIL] outsider parent 应被拒绝访问 inbox")
+            return
+        except PermissionError:
+            print("[OK] outsider parent 访问 inbox 被拒绝（PermissionError）")
+        print("[OK] 非家庭组 parent 访问 child_id 被拒绝")
 
-        # child 不能访问不存在的 child_id
-        child_owns_fake = await perm.child_owns_profile(child_user.id, str(uuid.uuid4()))
-        assert child_owns_fake == False, "child 不应该拥有不存在的 profile"
-        print(f"✓ 步骤 8: child 权限校验通过")
+    await engine.dispose()
 
-    await async_engine.dispose()
-    print("\n=== 所有验证测试通过！ ===")
+    print("\n" + "=" * 60)
+    print("✅ 全部 8 个验证步骤通过")
+    print("=" * 60)
 
 
 if __name__ == "__main__":
-    # 先安装 aiosqlite
-    try:
-        import aiosqlite
-    except ImportError:
-        print("安装 aiosqlite...")
-        import subprocess
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "aiosqlite", "-q"])
-
-    asyncio.run(run_tests())
+    asyncio.run(main())

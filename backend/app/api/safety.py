@@ -6,7 +6,6 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.session import get_db
 from app.api.deps import require_child_role
-from app.services.permission_service import PermissionService
 from app.schemas import (
     SafetyCheckRequest,
     SafetyCheckResponse,
@@ -14,6 +13,7 @@ from app.schemas import (
     SafetyResolveResponse,
 )
 from app.services.safety_service import SafetyService
+from app.services.permission_service import PermissionService
 
 router = APIRouter(prefix="/safety", tags=["安全"])
 
@@ -24,10 +24,13 @@ async def check_text(
     current_user: dict = Depends(require_child_role),
     db: AsyncSession = Depends(get_db),
 ):
+    # 权限校验：child 只能检查自己的文本
     perm = PermissionService(db)
     if not await perm.child_owns_profile(current_user["user_id"], req.child_id):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="无权访问该孩子档案")
-
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="无权访问该孩子档案",
+        )
     service = SafetyService(db)
     return service.check_text(req.text)
 
@@ -41,7 +44,6 @@ async def resolve_event(
 ):
     service = SafetyService(db)
     try:
-        # service 内部会校验 safety_event 所属的 child_id 是否属于当前用户
         return await service.resolve_event(
             user_id=current_user["user_id"],
             safety_event_id=event_id,

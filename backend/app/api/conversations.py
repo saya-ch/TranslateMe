@@ -7,7 +7,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional
 from app.db.session import get_db
 from app.api.deps import require_child_role, require_guardian_role, get_current_user
-from app.services.permission_service import PermissionService
 from app.schemas import (
     ChatRequest,
     ChatResponse,
@@ -17,8 +16,10 @@ from app.schemas import (
     ReplyRequest,
     ReplyResponse,
     InboxListResponse,
+    MessageResponse,
 )
 from app.services.conversation_service import ConversationService
+from app.services.permission_service import PermissionService
 
 router = APIRouter(prefix="/conversations", tags=["会话"])
 
@@ -29,10 +30,13 @@ async def chat(
     current_user: dict = Depends(require_child_role),
     db: AsyncSession = Depends(get_db),
 ):
-    # 权限校验：孩子只能访问自己的 child_profile
+    # 权限校验：child 只能访问自己的 child_profile
     perm = PermissionService(db)
     if not await perm.child_owns_profile(current_user["user_id"], req.child_id):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="无权访问该孩子档案")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="无权访问该孩子档案",
+        )
 
     service = ConversationService(db)
     try:
@@ -55,14 +59,14 @@ async def confirm_draft(
 ):
     service = ConversationService(db)
     try:
-        # service 内部会校验 draft 所属的 child_id 是否属于当前用户
-        result = await service.confirm_and_share(
+        return await service.confirm_and_share(
             user_id=current_user["user_id"],
             draft_id=draft_id,
             to_role=req.to_role,
             level=req.level,
+            final_title=req.title,
+            final_body=req.body,
         )
-        return result
     except PermissionError as e:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
     except ValueError as e:
@@ -93,10 +97,13 @@ async def reply(
     current_user: dict = Depends(require_guardian_role),
     db: AsyncSession = Depends(get_db),
 ):
-    # 权限校验：家长/老师必须在该孩子的家庭组中
+    # 权限校验：guardian 必须在孩子家庭组内
     perm = PermissionService(db)
     if not await perm.user_in_child_group(current_user["user_id"], req.child_id):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="无权访问该孩子档案")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="无权访问该孩子档案",
+        )
 
     service = ConversationService(db)
     try:
@@ -118,17 +125,13 @@ async def inbox(
     current_user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    perm = PermissionService(db)
-
-    # 如果指定了 child_id，校验权限
-    if child_id:
-        if not await perm.user_can_access_child(current_user["user_id"], current_user["role"], child_id):
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="无权访问该孩子档案")
-
     service = ConversationService(db)
-    items = await service.inbox_list(
-        user_id=current_user["user_id"],
-        user_role=current_user["role"],
-        child_id=child_id,
-    )
+    try:
+        items = await service.inbox_list(
+            user_id=current_user["user_id"],
+            user_role=current_user["role"],
+            child_id=child_id,
+        )
+    except PermissionError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
     return {"items": items, "total": len(items)}

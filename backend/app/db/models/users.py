@@ -1,6 +1,6 @@
 from app.db.base import Base, UUIDPK, CreatedAtMixin
 from sqlalchemy.orm import Mapped, mapped_column
-from sqlalchemy import String, CHAR
+from sqlalchemy import String, CHAR, ForeignKey
 
 
 class User(Base, UUIDPK, CreatedAtMixin):

@@ -34,7 +34,7 @@ interface ControllerProps {
 function dtoToInboxMessage(dto: InboxItemDTO): InboxMessage {
   return {
     id: dto.id,
-    from: dto.from_role === 'child' ? 'child' : 'parent',
+    from: (dto.from_role === 'child' ? 'child' : 'parent') as 'child' | 'parent',
     title: dto.title,
     body: dto.body,
     isVague: dto.level <= 1,
@@ -50,7 +50,6 @@ export function useParentController({ authUser, useLocalMode }: ControllerProps)
   const [stage, setStage] = useState<ParentStage>('initial')
 
   // 当前选中的 child_id（家长可访问的孩子）
-  // 实际产品应从家庭组列表中选择，这里先取第一个可访问的 child_id
   const childIdRef = useRef<string | null>(null)
 
   // 订阅收件箱变化

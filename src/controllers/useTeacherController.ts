@@ -75,11 +75,11 @@ export function useTeacherController({ authUser, useLocalMode }: ControllerProps
           })
           const c = result.content
           const guide = {
-            summary: c.summary,
-            privacyNote: c.privacy_note,
+            summary: c.summary || '',
+            privacyNote: c.privacy_note || '',
             talkAdvice: c.talk_advice || [],
             observePoints: c.observe_points || [],
-            referAdvice: c.referral_advice,
+            referAdvice: c.referral_advice || '',
           }
           setMessages((prev) => [
             ...prev,

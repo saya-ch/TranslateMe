@@ -1,8 +1,9 @@
 from app.db.base import Base, UUIDPK, CreatedAtMixin
 from sqlalchemy.orm import Mapped, mapped_column
-from sqlalchemy import String, CHAR, ForeignKey
+from sqlalchemy import String, JSON, CHAR, ForeignKey, DateTime
 from sqlalchemy.dialects.mysql import TINYINT, MEDIUMBLOB
-from typing import Optional
+from typing import Optional, List
+from datetime import datetime
 
 
 class Message(Base, UUIDPK, CreatedAtMixin):
