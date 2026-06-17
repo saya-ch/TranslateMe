@@ -32,7 +32,7 @@ import {
 } from '../lib/apiClient'
 
 const AI_GREETING =
-  '你可以先随便说一句，不用说完整。这里默认只有你自己能看到。'
+  '你可以先说给 AI 听，不会自动发出去。这里默认只有你自己能看到。想说一句就说一句，不用说完整。'
 
 interface ControllerProps {
   authUser: AuthUser | null

@@ -120,7 +120,23 @@ cd backend
 python verify.py
 ```
 
-`verify.py` 使用 SQLite 临时数据库（路径通过 `tempfile.gettempdir()` 获取，兼容 Windows），不依赖 MySQL，覆盖 8 个关键步骤：注册 → 家庭组 → 发消息 → 草稿 → 确认分享（带最终 title/body）→ 收件箱 → 权限防火墙 → 非 family 成员 403。
+`verify.py` 使用 SQLite 临时数据库（路径通过 `tempfile.gettempdir()` 获取，兼容 Windows），不依赖 MySQL，覆盖 13 个关键步骤：注册 → 家庭组（断言成员数 ≥ 2）→ 发消息 → 草稿 → 确认分享（带最终 title/body）→ 收件箱 → 权限防火墙 → 非 family 成员 403 → 独立 session 持久化 → 高风险安全事件 → safe/unsafe/escalation resolve。
+
+### 真实 LLM 验证
+
+```bash
+cd backend
+# 在 .env 或环境变量中配置 LLM_API_BASE / LLM_API_KEY / LLM_MODEL
+python verify_llm.py
+```
+
+`verify_llm.py` 验证真实 LLM 接入与安全边界（不打印 API Key）：
+- 普通孩子消息 `source=llm`
+- 默认对外草稿不泄露原话细节（学习/睡眠/家庭冲突等）
+- 高风险表达触发 `safety_event_id`，不生成草稿（不调 LLM）
+- 家长普通求助走 LLM
+- 家长追问原话被 firewall 拦截（不调 LLM）
+- 老师观察建议走 LLM
 
 ## 演示账号
 
@@ -206,7 +222,8 @@ TranslateMe/
 │   │   ├── schemas/                  # Pydantic v2 schemas
 │   │   └── services/                 # 业务服务（含 permission_service 统一权限校验）
 │   ├── seed.py                       # 种子数据（演示账号 + 家庭组）
-│   ├── verify.py                     # 端到端验证（SQLite 临时库，8 步）
+│   ├── verify.py                     # 端到端验证（SQLite 临时库，13 步）
+│   ├── verify_llm.py                 # 真实 LLM 验证（6 步，不打印 Key）
 │   ├── requirements.txt
 │   ├── docker-compose.yml            # MySQL
 │   └── .env.example

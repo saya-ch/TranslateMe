@@ -33,7 +33,7 @@ export function InboxChatCard({ message, onOpen }: InboxChatCardProps) {
 
       <p className="card-hint">
         {message.from === 'child'
-          ? '这是孩子发来的沟通请求。你看到的是温和摘要，不是孩子原话。'
+          ? '这是孩子确认后的提醒，不是原话。孩子选择把这段发给你看。'
           : '这是家长发来的回应。'}
       </p>
     </div>

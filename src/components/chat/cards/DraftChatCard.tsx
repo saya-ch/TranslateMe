@@ -38,8 +38,8 @@ export function DraftChatCard({
       </div>
 
       <div className="privacy-warn-box">
-        <strong>下面这段会被家长看到。</strong>
-        请确认没有你暂时不想分享的细节。默认内容是降敏摘要，你可以手动加入想说的具体内容。
+        <strong>发送前你可以改。</strong>
+        下面这段会被家长看到，请确认没有你暂时不想分享的细节。默认内容是降敏摘要，你可以手动加入想说的具体内容。
       </div>
 
       {scope === 'vague' && (

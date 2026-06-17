@@ -83,6 +83,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy import select
 from app.db.models.users import User
 from app.db.models.child_profiles import ChildProfile
+from app.db.models.family_groups import FamilyGroup
 
 
 # 默认对外草稿不应泄露的细节关键词
@@ -159,16 +160,13 @@ async def main():
         child_id = child_profile.id
 
         fam = FamilyGroupService(db)
-        await fam.create_or_get(
+        group_info = await fam.create_or_get(
             child_user_id=child_user.id,
             guardian_user_id=parent_user.id,
         )
-        # 把老师也加入家庭组
+        # 把老师也加入家庭组（child 作为 self 成员有权添加）
         await fam.add_member(
-            group_id=(await db.execute(
-                select(__import__("app.db.models.family_groups", fromlist=["FamilyGroup"]).FamilyGroup)
-                .where(__import__("app.db.models.family_groups", fromlist=["FamilyGroup"]).FamilyGroup.child_id == child_id)
-            )).scalar_one().id,
+            group_id=group_info["group_id"],
             user_id=teacher_user.id,
             relation="teacher",
             actor_user_id=child_user.id,
