@@ -12,7 +12,6 @@ export function CopyButton({ text }: CopyButtonProps) {
       if (navigator.clipboard && window.isSecureContext) {
         await navigator.clipboard.writeText(text)
       } else {
-        // 降级方案：用临时 textarea + execCommand
         const textarea = document.createElement('textarea')
         textarea.value = text
         textarea.style.position = 'fixed'
@@ -34,7 +33,7 @@ export function CopyButton({ text }: CopyButtonProps) {
       type="button"
       className={`copy-btn ${copied ? 'copied' : ''}`}
       onClick={handleCopy}
-      aria-label="复制这张卡的内容"
+      aria-label="复制内容"
     >
       {copied ? '已复制' : '复制'}
     </button>
