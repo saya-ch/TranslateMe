@@ -2,31 +2,6 @@
 
 export type Identity = 'student' | 'parent' | 'teacher'
 
-// 孩子端步骤
-export type ChildStep =
-  | 'input'        // 私密倾诉
-  | 'safety'       // 安全确认
-  | 'clarify'      // 三区块澄清
-  | 'scope'        // 分享范围
-  | 'preview'      // 草稿预览
-  | 'sent'         // 已发送
-  | 'inbox'        // 收件箱
-
-// 家长端步骤
-export type ParentStep =
-  | 'inbox'        // 收件箱
-  | 'message'      // 查看孩子沟通请求
-  | 'ask'          // 家长提问
-  | 'guide'        // AI 通用建议
-  | 'reply'        // 回应草稿预览
-  | 'replied'      // 已回复
-
-// 老师端步骤
-export type TeacherStep =
-  | 'input'        // 观察记录
-  | 'guide'        // 谈话建议+观察点+转介
-  | 'action'       // 选择行动
-
 // 安全确认分支
 export type SafetyChoice = 'safe' | 'unsafe' | null
 
@@ -49,11 +24,6 @@ export interface ParentMessageDraft {
   title: string
   body: string
   isVague: boolean   // 是否为模糊提醒模式
-}
-
-// 家长回应草稿
-export interface ParentReplyDraft {
-  body: string
 }
 
 // 收件箱消息
@@ -85,3 +55,75 @@ export interface TeacherGuide {
   observePoints: string[] // 观察点
   referAdvice: string     // 转介建议
 }
+
+// ===== Chat-first 消息类型 =====
+
+export type ChatMessage =
+  | { id: string; role: 'ai'; type: 'text'; text: string }
+  | { id: string; role: 'user'; type: 'text'; text: string }
+  | {
+      id: string
+      role: 'ai'
+      type: 'clarify-card'
+      clarify: ChildClarify
+      confirmed: boolean
+    }
+  | {
+      id: string
+      role: 'ai'
+      type: 'scope-card'
+      selected: ShareScope | null
+    }
+  | {
+      id: string
+      role: 'ai'
+      type: 'draft-card'
+      draft: ParentMessageDraft
+      scope: ShareScope
+      sent: boolean
+    }
+  | {
+      id: string
+      role: 'ai'
+      type: 'safety-card'
+      choice: SafetyChoice
+    }
+  | {
+      id: string
+      role: 'ai'
+      type: 'inbox-card'
+      message: InboxMessage
+    }
+  | {
+      id: string
+      role: 'ai'
+      type: 'guide-card'
+      guide: ParentGuide
+      isFirewall?: boolean
+      replySent?: boolean
+    }
+  | {
+      id: string
+      role: 'ai'
+      type: 'teacher-guide-card'
+      guide: TeacherGuide
+    }
+
+// 孩子端对话阶段（用于上下文感知快捷操作）
+export type ChildStage =
+  | 'initial'      // 初始，未输入
+  | 'input-done'   // 已输入，待整理
+  | 'clarify-done' // 已整理，待选分享范围
+  | 'scope-done'   // 已选分享范围，待预览
+  | 'sent'         // 已发送
+  | 'safety'       // 安全确认中
+
+// 家长端对话阶段
+export type ParentStage =
+  | 'initial'
+  | 'guide-shown'
+
+// 老师端对话阶段
+export type TeacherStage =
+  | 'initial'
+  | 'guide-shown'
