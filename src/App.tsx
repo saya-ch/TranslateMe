@@ -3,29 +3,60 @@ import type { Identity } from './types'
 import { IdentitySelect } from './components/IdentitySelect'
 import { Footer } from './components/Footer'
 import { ChatShell } from './components/chat/ChatShell'
+import { LoginPanel } from './components/LoginPanel'
 import { useChildController } from './controllers/useChildController'
 import { useParentController } from './controllers/useParentController'
 import { useTeacherController } from './controllers/useTeacherController'
+import { clearAuth, getStoredUser, type AuthUser } from './lib/apiClient'
 
-type Phase = 'home' | 'identity' | 'chat'
+type Phase = 'home' | 'identity' | 'login' | 'chat'
 
 export default function App() {
   const [phase, setPhase] = useState<Phase>('home')
   const [identity, setIdentity] = useState<Identity | null>(null)
+  // 是否使用本地模式（不连接后端）
+  const [useLocalMode, setUseLocalMode] = useState(false)
+  // 当前登录用户
+  const [authUser, setAuthUser] = useState<AuthUser | null>(() => getStoredUser())
 
   // 三个 controller 只在对应身份激活时使用
-  const child = useChildController()
-  const parent = useParentController()
-  const teacher = useTeacherController()
+  const child = useChildController({ authUser, useLocalMode })
+  const parent = useParentController({ authUser, useLocalMode })
+  const teacher = useTeacherController({ authUser, useLocalMode })
 
   const handleIdentity = (v: Identity) => {
     setIdentity(v)
+    // 已登录用户直接进入对话
+    if (authUser && authUser.role === identityToRole(v)) {
+      setPhase('chat')
+    } else {
+      setPhase('login')
+    }
+  }
+
+  const handleLoginSuccess = (user: AuthUser) => {
+    setAuthUser(user)
+    setUseLocalMode(false)
+    setPhase('chat')
+  }
+
+  const handleSkipLogin = () => {
+    setUseLocalMode(true)
+    setAuthUser(null)
     setPhase('chat')
   }
 
   const handleSwitchIdentity = () => {
     setIdentity(null)
     setPhase('identity')
+  }
+
+  const handleLogout = () => {
+    clearAuth()
+    setAuthUser(null)
+    setIdentity(null)
+    setUseLocalMode(false)
+    setPhase('home')
   }
 
   const handleReset = () => {
@@ -54,6 +85,18 @@ export default function App() {
               <div className="home-safe-note">
                 如果你现在情况比较紧急，可以选择"我是学生"后直接表达，系统会先做安全确认。
               </div>
+              {authUser && (
+                <div className="home-logged-in">
+                  已登录：{authUser.display_name}（{authUser.username}）
+                  <button
+                    type="button"
+                    className="ghost-btn"
+                    onClick={handleLogout}
+                  >
+                    退出登录
+                  </button>
+                </div>
+              )}
               <button
                 type="button"
                 className="primary-btn"
@@ -89,6 +132,17 @@ export default function App() {
           <Footer />
         </div>
       </div>
+    )
+  }
+
+  if (phase === 'login' && identity) {
+    return (
+      <LoginPanel
+        identity={identity}
+        onSuccess={handleLoginSuccess}
+        onBack={handleSwitchIdentity}
+        onSkip={handleSkipLogin}
+      />
     )
   }
 
@@ -137,4 +191,10 @@ export default function App() {
       onSwitchIdentity={handleSwitchIdentity}
     />
   )
+}
+
+function identityToRole(v: Identity): 'child' | 'parent' | 'teacher' {
+  if (v === 'student') return 'child'
+  if (v === 'parent') return 'parent'
+  return 'teacher'
 }

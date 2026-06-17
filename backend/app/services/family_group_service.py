@@ -181,6 +181,14 @@ class FamilyGroupService:
         if not consent:
             raise ValueError("授权不存在")
 
+        # 权限校验：只有创建该授权的用户或该孩子的 child_profile 所属用户才能撤销
+        child_stmt = select(ChildProfile).where(ChildProfile.id == consent.child_id)
+        child = (await self.db.execute(child_stmt)).scalar_one_or_none()
+        if not child:
+            raise ValueError("孩子档案不存在")
+        if consent.actor_user_id != actor_user_id and child.user_id != actor_user_id:
+            raise PermissionError("无权撤销此授权")
+
         consent.status = "revoked"
 
         audit = AuditLog(

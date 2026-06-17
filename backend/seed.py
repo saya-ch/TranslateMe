@@ -1,20 +1,24 @@
 """
 种子数据脚本 - 创建演示账号
+使用 ORM 方式插入，避免字段不匹配
 """
 
 import sys
 import uuid
-import asyncio
-from datetime import datetime
 from pathlib import Path
 
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.config import settings
+from app.db.base import Base
+from app.db.models.users import User
+from app.db.models.child_profiles import ChildProfile
+from app.db.models.family_groups import FamilyGroup
+from app.db.models.group_members import GroupMember
 from app.core.security import hash_password
 
 
@@ -30,132 +34,114 @@ def seed():
     Session = sessionmaker(bind=engine)
     session = Session()
 
-    users = [
-        {
-            "id": str(uuid.uuid4()),
-            "username": "kid_demo",
-            "display_name": "小明（孩子）",
-            "role": "child",
-            "password": "child123",
-        },
-        {
-            "id": str(uuid.uuid4()),
-            "username": "parent_demo",
-            "display_name": "妈妈（家长）",
-            "role": "parent",
-            "password": "parent123",
-        },
-        {
-            "id": str(uuid.uuid4()),
-            "username": "teacher_demo",
-            "display_name": "班主任（老师）",
-            "role": "teacher",
-            "password": "teacher123",
-        },
+    # 确保表存在
+    Base.metadata.create_all(engine)
+
+    users_data = [
+        ("kid_demo", "小明（孩子）", "child", "child123"),
+        ("parent_demo", "妈妈（家长）", "parent", "parent123"),
+        ("teacher_demo", "班主任（老师）", "teacher", "teacher123"),
     ]
 
-    # 插入用户
     child_user_id = None
     parent_user_id = None
-    for u in users:
-        existing = session.execute(
-            text("SELECT id FROM users WHERE username = :username"),
-            {"username": u["username"]},
-        ).fetchone()
+    teacher_user_id = None
 
+    for username, display_name, role, password in users_data:
+        existing = session.query(User).filter(User.username == username).first()
         if not existing:
-            session.execute(
-                text(
-                    "INSERT INTO users (id, username, display_name, role, password_hash, created_at) "
-                    "VALUES (:id, :username, :display_name, :role, :password_hash, NOW())"
-                ),
-                {
-                    "id": u["id"],
-                    "username": u["username"],
-                    "display_name": u["display_name"],
-                    "role": u["role"],
-                    "password_hash": hash_password(u["password"]),
-                },
+            user = User(
+                id=str(uuid.uuid4()),
+                username=username,
+                display_name=display_name,
+                role=role,
+                password_hash=hash_password(password),
             )
-            print(f"[OK] 创建用户: {u['username']} / {u['password']}")
+            session.add(user)
+            session.flush()
+            uid = user.id
+            print(f"[OK] 创建用户: {username} / {password}")
         else:
-            u["id"] = existing[0]
-            print(f"[SKIP] 用户已存在: {u['username']}")
+            uid = existing.id
+            print(f"[SKIP] 用户已存在: {username}")
 
-        if u["role"] == "child":
-            child_user_id = u["id"]
-        if u["role"] == "parent":
-            parent_user_id = u["id"]
+        if role == "child":
+            child_user_id = uid
+        elif role == "parent":
+            parent_user_id = uid
+        elif role == "teacher":
+            teacher_user_id = uid
 
     # 创建孩子档案
     child_id = None
     if child_user_id:
-        existing_child = session.execute(
-            text("SELECT id FROM child_profiles WHERE user_id = :user_id"),
-            {"user_id": child_user_id},
-        ).fetchone()
+        existing_child = session.query(ChildProfile).filter(
+            ChildProfile.user_id == child_user_id
+        ).first()
 
         if not existing_child:
-            child_id = str(uuid.uuid4())
-            session.execute(
-                text(
-                    "INSERT INTO child_profiles (id, user_id, display_name, age_group, grade, timezone, created_at) "
-                    "VALUES (:id, :user_id, :display_name, :age_group, :grade, :timezone, NOW())"
-                ),
-                {
-                    "id": child_id,
-                    "user_id": child_user_id,
-                    "display_name": "小明",
-                    "age_group": "teen",
-                    "grade": "未指定",
-                    "timezone": "Asia/Shanghai",
-                },
+            child = ChildProfile(
+                id=str(uuid.uuid4()),
+                user_id=child_user_id,
+                display_name="小明",
+                age_group="teen",
+                grade="未指定",
+                timezone="Asia/Shanghai",
             )
+            session.add(child)
+            session.flush()
+            child_id = child.id
             print(f"[OK] 创建孩子档案: {child_id}")
         else:
-            child_id = existing_child[0]
+            child_id = existing_child.id
+            print(f"[SKIP] 孩子档案已存在: {child_id}")
 
     # 创建家庭组
     if child_id and parent_user_id:
-        existing_group = session.execute(
-            text("SELECT id FROM family_groups WHERE child_id = :child_id"),
-            {"child_id": child_id},
-        ).fetchone()
+        existing_group = session.query(FamilyGroup).filter(
+            FamilyGroup.child_id == child_id
+        ).first()
 
         if not existing_group:
-            group_id = str(uuid.uuid4())
-            session.execute(
-                text(
-                    "INSERT INTO family_groups (id, child_id, name, created_at) "
-                    "VALUES (:id, :child_id, :name, NOW())"
-                ),
-                {"id": group_id, "child_id": child_id, "name": "小明的家庭组"},
+            group = FamilyGroup(
+                id=str(uuid.uuid4()),
+                child_id=child_id,
+                name="小明的家庭组",
             )
+            session.add(group)
+            session.flush()
 
-            # 添加成员
-            for idx, member_user_id in enumerate([child_user_id, parent_user_id]):
-                relation = "self" if idx == 0 else "guardian"
-                session.execute(
-                    text(
-                        "INSERT INTO group_members (id, group_id, user_id, relation, created_at) "
-                        "VALUES (:id, :group_id, :user_id, :relation, NOW())"
-                    ),
-                    {
-                        "id": str(uuid.uuid4()),
-                        "group_id": group_id,
-                        "user_id": member_user_id,
-                        "relation": relation,
-                    },
-                )
-            print(f"[OK] 创建家庭组: {group_id}")
+            # 添加孩子自己
+            session.add(GroupMember(
+                id=str(uuid.uuid4()),
+                group_id=group.id,
+                user_id=child_user_id,
+                relation="self",
+            ))
+            # 添加家长
+            session.add(GroupMember(
+                id=str(uuid.uuid4()),
+                group_id=group.id,
+                user_id=parent_user_id,
+                relation="guardian",
+            ))
+            # 添加老师
+            if teacher_user_id:
+                session.add(GroupMember(
+                    id=str(uuid.uuid4()),
+                    group_id=group.id,
+                    user_id=teacher_user_id,
+                    relation="teacher",
+                ))
+            print(f"[OK] 创建家庭组: {group.id}")
 
     session.commit()
     session.close()
     engine.dispose()
     print("\n=== 种子数据创建完成 ===")
     print("可用账号：")
-    for u in users:
-        print(f"  - {u['username']} / {u['password']} ({u['display_name']})")
+    for username, display_name, role, password in users_data:
+        print(f"  - {username} / {password} ({display_name})")
 
 
 if __name__ == "__main__":

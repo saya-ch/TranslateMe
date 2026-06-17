@@ -1,10 +1,9 @@
 from app.db.base import Base, UUIDPK, CreatedAtMixin
 from sqlalchemy.orm import Mapped, mapped_column
-from sqlalchemy import String, CHAR, ForeignKey
-from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy import String, CHAR
 
 
-class User(Base, UUIDPK):
+class User(Base, UUIDPK, CreatedAtMixin):
     __tablename__ = "users"
 
     username: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)

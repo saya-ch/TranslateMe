@@ -197,6 +197,12 @@ class ConversationService:
         if draft.status != "preview":
             raise ValueError("草稿状态异常")
 
+        # 权限校验：只有该孩子的 child_profile 所属用户才能确认草稿
+        child_stmt = select(ChildProfile).where(ChildProfile.id == draft.child_id)
+        child = (await self.db.execute(child_stmt)).scalar_one_or_none()
+        if not child or child.user_id != user_id:
+            raise PermissionError("无权操作此草稿")
+
         title = aes_decrypt(draft.title_enc, settings.ENCRYPTION_AES_KEY)
         body = aes_decrypt(draft.body_enc, settings.ENCRYPTION_AES_KEY)
 
@@ -266,6 +272,12 @@ class ConversationService:
         share = (await self.db.execute(share_stmt)).scalar_one_or_none()
         if not share:
             raise ValueError("分享不存在或已撤回")
+
+        # 权限校验：只有该孩子的 child_profile 所属用户才能撤回
+        child_stmt = select(ChildProfile).where(ChildProfile.id == share.child_id)
+        child = (await self.db.execute(child_stmt)).scalar_one_or_none()
+        if not child or child.user_id != user_id:
+            raise PermissionError("无权操作此分享")
 
         share.status = "revoked"
 
