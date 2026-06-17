@@ -1,21 +1,24 @@
-import { EXAMPLES } from '../data/examples'
+import { useState } from 'react'
+import { CHILD_EXAMPLES } from '../data/examples'
 
-interface InputPanelProps {
-  value: string
-  onChange: (v: string) => void
-  onSubmit: () => void
+interface ChildInputProps {
+  onSubmit: (text: string) => void
 }
 
-export function InputPanel({ value, onChange, onSubmit }: InputPanelProps) {
+export function ChildInput({ onSubmit }: ChildInputProps) {
+  const [value, setValue] = useState('')
   const canSubmit = value.trim().length > 0
 
   return (
     <div className="input-panel">
+      <p className="panel-hint">
+        在这里写下一句话。默认只有你自己能看到，不会自动发给任何人。
+      </p>
       <textarea
         className="input-box"
         placeholder="比如：我很烦，不想去学校 / 最近上课总想哭 / 爸妈只会说我矫情"
         value={value}
-        onChange={(e) => onChange(e.target.value)}
+        onChange={(e) => setValue(e.target.value)}
         rows={4}
         maxLength={200}
         aria-label="说一句你现在最想说的话"
@@ -27,12 +30,12 @@ export function InputPanel({ value, onChange, onSubmit }: InputPanelProps) {
       <div className="examples">
         <div className="examples-title">不知道怎么说？点一下试试：</div>
         <div className="examples-list">
-          {EXAMPLES.map((ex, i) => (
+          {CHILD_EXAMPLES.map((ex, i) => (
             <button
               key={i}
               type="button"
               className="example-chip"
-              onClick={() => onChange(ex.text)}
+              onClick={() => setValue(ex.text)}
             >
               {ex.text}
             </button>
@@ -44,9 +47,9 @@ export function InputPanel({ value, onChange, onSubmit }: InputPanelProps) {
         type="button"
         className="primary-btn"
         disabled={!canSubmit}
-        onClick={onSubmit}
+        onClick={() => onSubmit(value)}
       >
-        帮我说出口
+        帮我整理
       </button>
     </div>
   )

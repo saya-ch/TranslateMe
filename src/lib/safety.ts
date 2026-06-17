@@ -1,5 +1,6 @@
-// 高风险表达检测
-// 命中即跳转安全支持页，不生成普通三张卡，不追问细节，不输出方法。
+// 安全确认检测
+// 注意：命中相关表达不等于系统判定孩子有危险，也不等于直接放行。
+// 命中后进入"安全确认页"，由用户自己选择当前状态。
 
 // 高风险关键词（含常见变体）
 const HIGH_RISK_WORDS: string[] = [
@@ -46,8 +47,9 @@ function preprocess(text: string): string {
     .replace(/著/g, '着')
 }
 
-// 检测输入是否命中高风险表达
-export function isHighRisk(input: string): boolean {
+// 检测输入是否命中需要安全确认的表达
+// 返回 true 表示需要进入安全确认页（不代表判定危险）
+export function needsSafetyCheck(input: string): boolean {
   if (!input) return false
   const text = preprocess(input)
 
