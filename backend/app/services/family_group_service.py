@@ -29,6 +29,7 @@ class FamilyGroupService:
         group_stmt = select(FamilyGroup).where(FamilyGroup.child_id == child.id)
         group = (await self.db.execute(group_stmt)).scalar_one_or_none()
 
+        created = False
         if not group:
             group = FamilyGroup(
                 id=str(uuid.uuid4()),
@@ -56,8 +57,16 @@ class FamilyGroupService:
                     relation="guardian",
                 )
             )
+            created = True
 
-        # 成员列表
+        # 新建分支必须 commit，否则 FastAPI get_db 请求结束后事务回滚，
+        # 家庭组和成员不会真正持久化。
+        if created:
+            await self.db.commit()
+            # commit 后对象可能 expired，重新查询以确保返回最新成员列表
+            await self.db.refresh(group)
+
+        # 成员列表（commit 后重新查询，保证返回持久化数据）
         members_stmt = select(GroupMember).where(GroupMember.group_id == group.id)
         members = (await self.db.execute(members_stmt)).scalars().all()
 

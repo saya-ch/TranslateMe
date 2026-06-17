@@ -4,17 +4,18 @@
 
 测试步骤：
 1. 注册 child/parent
-2. 创建家庭组
+2. 创建家庭组（断言成员数 >= 2）
 3. child 发消息
 4. 生成草稿
 5. child 确认分享（带最终 title/body）
 6. parent 收件箱可见
 7. parent 追问原话被防火墙拒绝
 8. 非家庭组 parent 访问 child_id 被 403
-9. child 发送高风险文本 → 创建 safety_event_id
-10. safe_continue resolve 成功
-11. unsafe_support resolve 不调 LLM，返回资源提示
-12. escalation resolve 不调 LLM，返回资源提示
+9. 独立 session 验证家庭组持久化（模拟 get_db 请求生命周期）
+10. child 发送高风险文本 → 创建 safety_event_id
+11. safe_continue resolve 成功
+12. unsafe_support resolve 不调 LLM，返回资源提示
+13. escalation resolve 不调 LLM，返回资源提示
 """
 
 import sys
@@ -163,6 +164,14 @@ async def main():
         )
         print(f"[OK] 创建家庭组: group_id={group['group_id']}")
         print(f"     成员数: {len(group['members'])}")
+        assert len(group["members"]) >= 2, (
+            f"成员数应 >= 2（child self + guardian），实际 {len(group['members'])}"
+        )
+        relations = {m["relation"] for m in group["members"]}
+        assert "self" in relations and "guardian" in relations, (
+            f"应包含 self 和 guardian，实际 {relations}"
+        )
+        print("[OK] 成员数 >= 2，包含 child self 和 guardian")
 
         # ===== 步骤 3：child 发消息 =====
         print("\n--- 步骤 3：child 发消息 ---")
@@ -259,10 +268,56 @@ async def main():
             print("[OK] outsider parent 访问 inbox 被拒绝（PermissionError）")
         print("[OK] 非家庭组 parent 访问 child_id 被拒绝")
 
-        # ===== 步骤 9：child 发送高风险文本 → 创建 safety_event_id =====
-        print("\n--- 步骤 9：child 发送高风险文本 → 创建 safety_event_id ---")
+    # ===== 步骤 9：独立 session 验证家庭组持久化 =====
+    # 模拟真实请求生命周期：session A 创建家庭组后关闭，
+    # session B 重新查询，确认 group 和 members 已真正持久化。
+    print("\n--- 步骤 9：独立 session 验证家庭组持久化 ---")
+    async with AsyncSessionLocal() as db:
+        fam_service_a = FamilyGroupService(db)
+        group_a = await fam_service_a.create_or_get(
+            child_user_id=child_user_id,
+            guardian_user_id=parent_user_id,
+        )
+        group_id_a = group_a["group_id"]
+        members_a = group_a["members"]
+        print(f"[OK] session A 创建家庭组: group_id={group_id_a}")
+        print(f"     session A 成员数: {len(members_a)}")
+        assert len(members_a) >= 2, (
+            f"session A 成员数应 >= 2，实际 {len(members_a)}"
+        )
+        # session A 结束（模拟请求结束，get_db 关闭 session）
+
+    # session B：全新 session 重新查询，验证持久化
+    async with AsyncSessionLocal() as db:
+        from app.db.models.family_groups import FamilyGroup as FG
+        from app.db.models.group_members import GroupMember as GM
+
+        group_b = (
+            await db.execute(select(FG).where(FG.id == group_id_a))
+        ).scalar_one_or_none()
+        assert group_b is not None, "session B 应能查到已持久化的家庭组"
+        print(f"[OK] session B 查到家庭组: child_id={group_b.child_id}")
+
+        members_b = (
+            await db.execute(select(GM).where(GM.group_id == group_id_a))
+        ).scalars().all()
+        print(f"[OK] session B 查到成员数: {len(members_b)}")
+        assert len(members_b) >= 2, (
+            f"session B 成员数应 >= 2（已持久化），实际 {len(members_b)}"
+        )
+        relations_b = {m.relation for m in members_b}
+        assert "self" in relations_b and "guardian" in relations_b, (
+            f"session B 应包含 self 和 guardian，实际 {relations_b}"
+        )
+        print("[OK] 家庭组在独立 session 中持久化，members >= 2")
+
+    # 后续步骤回到主 session
+    async with AsyncSessionLocal() as db:
+        # ===== 步骤 10：child 发送高风险文本 → 创建 safety_event_id =====
+        print("\n--- 步骤 10：child 发送高风险文本 → 创建 safety_event_id ---")
         safety_service = SafetyService(db)
         high_risk_text = "我最近真的撑不下去了，活着没意思"
+        conv_service = ConversationService(db)
         safety_chat = await conv_service.process_child_message(
             user_id=child_user_id,
             conversation_id=None,
@@ -279,8 +334,8 @@ async def main():
         safe_event_id = safety_chat["safety_event_id"]
         print("[OK] 后端已创建 safety_event_id，草稿未生成")
 
-        # ===== 步骤 10：safe_continue resolve 成功 =====
-        print("\n--- 步骤 10：safe_continue resolve 成功 ---")
+        # ===== 步骤 11：safe_continue resolve 成功 =====
+        print("\n--- 步骤 11：safe_continue resolve 成功 ---")
         safe_resolve = await safety_service.resolve_event(
             user_id=child_user_id,
             safety_event_id=safe_event_id,
@@ -293,8 +348,8 @@ async def main():
         assert safe_resolve["llm_called"] is False, "safe_continue 不应调用 LLM"
         print("[OK] safe_continue resolve 成功，未调用 LLM")
 
-        # ===== 步骤 11：unsafe_support resolve 不调 LLM，返回资源提示 =====
-        print("\n--- 步骤 11：unsafe_support resolve 不调 LLM，返回资源提示 ---")
+        # ===== 步骤 12：unsafe_support resolve 不调 LLM，返回资源提示 =====
+        print("\n--- 步骤 12：unsafe_support resolve 不调 LLM，返回资源提示 ---")
         unsafe_chat = await conv_service.process_child_message(
             user_id=child_user_id,
             conversation_id=None,
@@ -316,8 +371,8 @@ async def main():
         # resources_shown=True 即表示已返回资源
         print("[OK] unsafe_support 未调 LLM，返回资源提示")
 
-        # ===== 步骤 12：escalation resolve 不调 LLM，返回资源提示 =====
-        print("\n--- 步骤 12：escalation resolve 不调 LLM，返回资源提示 ---")
+        # ===== 步骤 13：escalation resolve 不调 LLM，返回资源提示 =====
+        print("\n--- 步骤 13：escalation resolve 不调 LLM，返回资源提示 ---")
         esc_chat = await conv_service.process_child_message(
             user_id=child_user_id,
             conversation_id=None,
@@ -343,7 +398,7 @@ async def main():
     await engine.dispose()
 
     print("\n" + "=" * 60)
-    print("✅ 全部 12 个验证步骤通过")
+    print("✅ 全部 13 个验证步骤通过")
     print("=" * 60)
 
 
